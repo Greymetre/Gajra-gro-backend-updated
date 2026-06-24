@@ -69,7 +69,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 console.log(process.env.DB_URL,6756756)
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { cors: true });
-  const port = process.env.NODE_PORT || 4000;
+  const port = process.env.PORT || process.env.NODE_PORT || 4000;
   if ((process.env.NODE_ENV === 'production')) {
     app.useStaticAssets(join(__dirname, 'uploaded'), {
       index: false,
