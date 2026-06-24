@@ -66,7 +66,6 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 
 
   // This is a worker process
-console.log(process.env.DB_URL,6756756)
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { cors: true });
   const port = process.env.PORT || process.env.NODE_PORT || 4000;
