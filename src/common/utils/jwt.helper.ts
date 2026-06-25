@@ -1,5 +1,6 @@
 import * as jwt from 'jsonwebtoken';
 import { JwtTokenInterface, CustomerJwtTokenInterface } from '../interfaces/jwt.token.interface';
+import { getS3BucketName, getS3Client } from './s3-client';
 
 export const generateCustomerToken = async (tokenDto: CustomerJwtTokenInterface): Promise<string> => {
   return await jwt.sign(tokenDto, process.env.JWT_SECRET, {
@@ -58,9 +59,7 @@ export const destroyCustomerToken = async (headers: any): Promise<false | any> =
     return await decodeCustomerToken(token);
 }
 
-const AWS = require('aws-sdk');
 const fs = require('fs');
-const s3 = new AWS.S3();
 
 export const uploadFile = (filePath, key) => {
   try {
@@ -69,13 +68,13 @@ export const uploadFile = (filePath, key) => {
 
   // Parameters for the S3 upload
   const params = {
-    Bucket: "gajragro.fieldkonnect.io",
+    Bucket: getS3BucketName(),
     Key: key, // File name you want to save as in S3
     Body: fileContent,
   };
 
   // Uploading the file to the specified bucket
-  s3.upload(params, (err, data) => {
+  getS3Client().upload(params, (err, data) => {
     if (err) {
       console.error('Error uploading file:', err);
     } else {

@@ -15,12 +15,9 @@ import { Model } from "mongoose";
 import { v4 as uuid } from 'uuid';
 import axios from "axios";
 import * as bcrypt from 'bcrypt';
-import * as AWS from 'aws-sdk';
 import * as path from 'path';
-import { uploadFile } from './jwt.helper';
+import { getS3BucketName, getS3Client } from './s3-client';
 
-
-const s3 = new AWS.S3();
 
 import * as admin from 'firebase-admin';
 
@@ -80,14 +77,14 @@ export class UploadFilesHelper {
     const fileName = `uploaded/${folderName}/${file.filename}`;
 
     const uploadParams = {
-      Bucket: process.env.BUCKET_NAME,
+      Bucket: getS3BucketName(),
       Key: fileName,
       Body: fileStream,
       ContentType: file.mimetype
     };
 
     try {
-      const data = await s3.upload(uploadParams).promise();
+      const data = await getS3Client().upload(uploadParams).promise();
       console.log(`File uploaded successfully at ${data.Location}`);
       return data.Location;
     } catch (error) {
@@ -486,6 +483,7 @@ export const imageName = async (req, images) => {
 
 export const uploadFolderToS3 = async (folderPath: string, s3Bucket: string, s3Folder: string) => {
   try {
+    const bucketName = s3Bucket || getS3BucketName();
 
     await fsPromises.access(folderPath);
     const files = await fsPromises.readdir(folderPath);
@@ -495,14 +493,14 @@ export const uploadFolderToS3 = async (folderPath: string, s3Bucket: string, s3F
       if ((await fsPromises.stat(filePath)).isFile()) {
         const fileStream = fs.createReadStream(filePath);
         const uploadParams = {
-          Bucket: s3Bucket,
+          Bucket: bucketName,
           Key: `${s3Folder}/${file}`,
           Body: fileStream,
           ContentType: 'image/jpeg',
         };
 
-        await s3.upload(uploadParams).promise();
-        console.log(`Successfully uploaded ${file} to ${s3Bucket}/${s3Folder}`);
+        await getS3Client().upload(uploadParams).promise();
+        console.log(`Successfully uploaded ${file} to ${bucketName}/${s3Folder}`);
       }
     }
   } catch (error) {
@@ -514,7 +512,7 @@ export const uploadFolderToS3 = async (folderPath: string, s3Bucket: string, s3F
 
 export const listImagesByTimeWithVersions = async (prefix = '', startTime, endTime) => {
   const params = {
-    Bucket: "gajragro.fieldkonnect.io",
+    Bucket: getS3BucketName(),
     Prefix: prefix,
   };
 
@@ -525,7 +523,7 @@ export const listImagesByTimeWithVersions = async (prefix = '', startTime, endTi
     let versionIdMarker;
 
     while (isTruncated) {
-      const data = await s3.listObjectVersions({
+      const data = await getS3Client().listObjectVersions({
         ...params,
         KeyMarker: keyMarker,
         VersionIdMarker: versionIdMarker,
@@ -545,8 +543,8 @@ export const listImagesByTimeWithVersions = async (prefix = '', startTime, endTi
       if (images && images.length > 0) {
         for (const file of images) {
           console.log(`Deleting File: ${file.Key}, VersionId: ${file.VersionId}, LastModified: ${file.LastModified}`);
-          await s3.deleteObject({
-            Bucket: "gajragro.fieldkonnect.io",
+          await getS3Client().deleteObject({
+            Bucket: getS3BucketName(),
             Key: file.Key,
             VersionId: file.VersionId, // Delete specific version
           }).promise();
@@ -574,4 +572,3 @@ export const listImagesByTimeWithVersions = async (prefix = '', startTime, endTi
     throw error;
   }
 };
-
