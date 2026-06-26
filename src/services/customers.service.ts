@@ -128,8 +128,8 @@ export class CustomersService {
         const payload: CustomerJwtTokenInterface = JSON.parse(JSON.stringify(user));
 
         if (user.firstTimeLogin && loginDto.deviceToken && user.customerType == "Mechanic") {
-          await PushNotification(`${loginDto.deviceToken}`, `50 Welcome Points  💸 💸`, `${user.firmName}, you have successfully earned 50 welcome points in Gajra Gro + Loyalty`, "Redeem History");
-          await PushNotification(`${loginDto.deviceToken}`, `Sign up Successful 💯`, `${user.firmName}, your sign up is successful in Gajra Gro + Loyalty.`, "Dashboard");
+          // await PushNotification(`${loginDto.deviceToken}`, `50 Welcome Points  💸 💸`, `${user.firmName}, you have successfully earned 50 welcome points in Gajra Gro + Loyalty`, "Redeem History");
+          // await PushNotification(`${loginDto.deviceToken}`, `Sign up Successful 💯`, `${user.firmName}, your sign up is successful in Gajra Gro + Loyalty.`, "Dashboard");
 
           await this.customerModel.findOneAndUpdate({ _id: user._id }, { firstTimeLogin: false })
 
@@ -415,9 +415,8 @@ export class CustomersService {
           });
           var { points } = await this.welcomePointsSetting();
           if (points.welcome && signupDto.customerType == "Mechanic") {
-            await PushNotification(`${signupDto.deviceToken}`, ` 50 Welcome Points  💸 💸`, `${signupDto.firmName}, you have successfully earned 50 welcome points in Gajra Gro + Loyalty`, "History");
-
             await this.welcomeTransactionsPoints(customer, points.welcome);
+            // await PushNotification(`${signupDto.deviceToken}`, ` 50 Welcome Points  💸 💸`, `${signupDto.firmName}, you have successfully earned 50 welcome points in Gajra Gro + Loyalty`, "History");
           }
           await PushNotification(`${signupDto.deviceToken}`, ` Sign up Successful 💯`, `${signupDto.firmName}, your sign up is successful in Gajra Gro + Loyalty.`, "Dashboard");
 
