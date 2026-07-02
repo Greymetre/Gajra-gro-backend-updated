@@ -818,6 +818,101 @@ export class TransactionsService {
     }
   }
 
+  private async buildApprovalTransactionsForActiveSchemes(params: {
+    couponCode: string;
+    customer: any;
+    productid?: any;
+    couponGg?: string;
+    createdBy: any;
+  }): Promise<any[]> {
+    const setting = await this.projectSettingModel
+      .findOne({})
+      .select('loyaltyscheme')
+      .exec();
+    const customerInfo = await this.getCustomerProfileInfo(params.customer._id);
+
+    let product = null;
+    if (params.productid && ObjectId.isValid(params.productid)) {
+      product = await this.productModel.findOne({ _id: ObjectId(params.productid) });
+    }
+    if (!product && params.couponGg) {
+      product = await this.productModel.findOne({ productNo: params.couponGg });
+    }
+    if (!product) {
+      throw new BadRequestException('Product not exist');
+    }
+
+    const schemes = await this.getActiveSchemes();
+    const validSchemes = schemes.filter((scheme) =>
+      scheme.customerType.includes(customerInfo.customerType)
+    );
+
+    let refno = await this.getNewRefNoTransaction();
+    const transactions = [];
+
+    for (const scheme of validSchemes) {
+      if (
+        setting?.loyaltyscheme?.customerType_based &&
+        !scheme.customerType.includes(customerInfo.customerType)
+      ) {
+        continue;
+      }
+
+      if (
+        setting?.loyaltyscheme?.states_based &&
+        !scheme.states.includes(customerInfo.state)
+      ) {
+        continue;
+      }
+
+      if (
+        setting?.loyaltyscheme?.city_based &&
+        !scheme.cities.includes(customerInfo.city)
+      ) {
+        continue;
+      }
+
+      const matchedProducts = scheme.schemeDetail.find((detail) =>
+        Array.isArray(detail.products) &&
+        detail.products.some((productid) => productid.toString() === product._id.toString())
+      );
+
+      const schemePoints = matchedProducts ? Number(matchedProducts.points) : 0;
+      if (!matchedProducts || schemePoints === 0) {
+        continue;
+      }
+
+      const primaryDetail = Array.isArray(product.productDetail)
+        ? product.productDetail.find((detail) => detail.isPrimary) || product.productDetail[0]
+        : null;
+      const mrp = Number(primaryDetail?.mrp || product.points || 0);
+      const points = scheme.basedOn === 'Percentage'
+        ? Math.round((schemePoints / 100) * mrp)
+        : schemePoints;
+
+      transactions.push({
+        coupon: params.couponCode,
+        productid: product._id,
+        customerid: ObjectId(customerInfo._id),
+        schemeid: scheme._id,
+        points,
+        transactionType: 'Cr',
+        refno: refno++,
+        pointType: scheme.schemeName || 'Coupon Scan',
+        modifyByid: params.createdBy,
+        createdBy: params.createdBy,
+        createdAt: new Date(),
+        customerType: params.customer.customerType,
+      });
+    }
+
+    if (transactions.length === 0) {
+      throw new BadRequestException('NO_VALID_SCHEMES_FOUND');
+    }
+
+    return transactions;
+  }
+
   async couponScans(couponsScanDTO: AdminCouponsScanDTO, req?: Request): Promise<any> {
     try {
       const setting = await this.projectSettingModel
@@ -2124,28 +2219,18 @@ export class TransactionsService {
               throw new BadRequestException(`Coupon already scan by ${findTransaction[0].firmName},${findTransaction[0].mobile},${findTransaction[0].createdAt}`)
             } else {
 
-              var refno = await this.getNewRefNoTransaction()
-              refno = refno + 1;
-              const transactionObj = new this.transactionModel({
-                coupon: statusCouponDto.couponCode,
-                productid: statusCouponDto.productid ? statusCouponDto.productid : "",
-                customerid: statusCouponDto.customerid ? statusCouponDto.customerid : findCustomer._id,
-                schemeid: statusCouponDto.schemeid,
-                points: statusCouponDto.points,
-                transactionType: "Cr",
-                refno: refno,
-                pointType: statusCouponDto.pointType,
-                modifyByid: authInfo._id,
+              const transactions = await this.buildApprovalTransactionsForActiveSchemes({
+                couponCode: statusCouponDto.couponCode,
+                productid: statusCouponDto.productid,
+                customer: findCustomer,
                 createdBy: authInfo._id,
-                createdAt: new Date(),
-                customerType: findCustomer.customerType
-              })
+              });
 
-              if (transactionObj.save()) {
-
-                await this.invalidCouponModel.findByIdAndUpdate({ _id: statusCouponDto.invalidCouponid }, { createdAt: new Date(), statusType: statusCouponDto.statusType, remark: statusCouponDto.remark, modifyByid: authInfo._id })
-                return { ...transactionObj, isError: false, message: `${statusCouponDto.points} points received successfully ` }
-              }
+              const customerInfo = await this.getCustomerProfileInfo(findCustomer._id);
+              await this.handleTransactions(transactions, customerInfo);
+              await this.invalidCouponModel.findByIdAndUpdate({ _id: statusCouponDto.invalidCouponid }, { createdAt: new Date(), statusType: statusCouponDto.statusType, remark: statusCouponDto.remark, modifyByid: authInfo._id })
+              const totalPoints = transactions.reduce((sum, transaction) => sum + Number(transaction.points || 0), 0);
+              return { transactions, isError: false, message: `${totalPoints} points received successfully ` }
             }
 
 
@@ -2295,117 +2380,17 @@ export class TransactionsService {
             throw new BadRequestException(`Coupon already scan by ${findTransaction[0].firmName},${findTransaction[0].mobile},${findTransaction[0].createdAt}`)
           } else {
 
-            var refno = await this.getNewRefNoTransaction()
-            refno = refno + 1;
-
-            const findProduct = await this.productModel.findOne({ productNo: addInvalidCouponDTO.couponGg });
-
-            if (!findProduct) {
-              throw new BadRequestException(`Product not exist`)
-            }
-            let condition: any = {};
-
-            const pipeline = [
-              {
-                $match: {
-                  customerType: {
-                    $in: Array.isArray(findCustomer.customerType) ? findCustomer.customerType : [findCustomer.customerType],
-                  },
-                },
-              },
-              {
-                $project: {
-                  schemeDetail: 1,
-                  _id: 1,
-                  schemeName: 1,
-                },
-              },
-              {
-                $unwind: {
-                  path: "$schemeDetail",
-                  preserveNullAndEmptyArrays: true,
-                },
-              },
-              {
-                $unwind: {
-                  path: "$schemeDetail.products",
-                  preserveNullAndEmptyArrays: true,
-                },
-              },
-
-              {
-                $lookup: {
-                  from: "products",
-                  localField: "schemeDetail.products",
-                  foreignField: "_id",
-                  pipeline: [
-                    { $project: { _id: 1, productNo: 1, name: 1, categoryid: 1, description: 1, partNo: { $ifNull: [{ $first: "$productDetail.partNo" }, ""] } } },
-                  ],
-                  as: "productInfo",
-                },
-              },
-              {
-                $unwind: {
-                  path: "$productInfo",
-                  preserveNullAndEmptyArrays: true,
-                },
-              },
-              {
-                $lookup: {
-                  from: "categories",
-                  localField: "productInfo.categoryid",
-                  foreignField: "_id",
-                  pipeline: [
-                    { $project: { _id: 1, categoryName: 1 } }
-                  ],
-                  as: "categoryInfo",
-                },
-              },
-              { $match: { "productInfo._id": findProduct._id } },
-              {
-                $project: {
-                  product: "$productInfo.name",
-                  description: "$productInfo.description",
-                  productid: "$productInfo._id",
-                  partNo: "$productInfo.partNo",
-                  points: { $toDouble: "$schemeDetail.points" },
-                  GgNumber: "$productInfo.productNo",
-                  pointType: "$schemeName",
-                  categoryName: { $ifNull: [{ $first: "$categoryInfo.categoryName" }, ""] },
-                },
-              },
-            ];
-
-            if (Object.keys(condition).length > 0) {
-              pipeline.push({
-                $match: condition,
-              });
-            }
-
-            const results = await this.schemeModel.aggregate(pipeline).exec();
-            if (results.length == 0) {
-              throw new BadRequestException(`Product not exist`)
-            }
-
-            const transactionObj = new this.transactionModel({
-              coupon: addInvalidCouponDTO.couponCode,
-              productid: findProduct._id ? findProduct._id : "",
-              customerid: addInvalidCouponDTO.customerid ? addInvalidCouponDTO.customerid : findCustomer,
-              schemeid: results[0].__dirname,
-              points: results[0].points,
-              transactionType: "Cr",
-              refno: refno,
-              pointType: results[0].pointType,
-              modifyByid: authInfo._id,
+            const transactions = await this.buildApprovalTransactionsForActiveSchemes({
+              couponCode: addInvalidCouponDTO.couponCode,
+              couponGg: addInvalidCouponDTO.couponGg,
+              customer: findCustomer,
               createdBy: authInfo._id,
-              createdAt: new Date(),
-              customerType: findCustomer.customerType
-            })
+            });
 
-            if (transactionObj.save()) {
-
-              return { isError: false, message: `${findProduct.points} points received successfully ` }
-            }
+            const customerInfo = await this.getCustomerProfileInfo(findCustomer._id);
+            await this.handleTransactions(transactions, customerInfo);
+            const totalPoints = transactions.reduce((sum, transaction) => sum + Number(transaction.points || 0), 0);
+            return { transactions, isError: false, message: `${totalPoints} points received successfully ` }
           }
 
 
@@ -2542,6 +2527,3 @@ export class TransactionsService {
 
 
 };
-
-
-
