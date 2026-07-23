@@ -397,11 +397,28 @@ export class CouponProfileService {
         if (ele.coupons && ele.coupons.length > 0) {
           ele["mechanicCoupons"] = [];
           ele["retailerCoupons"] = [];
+          ele["mScanStatus"] = "N";
+          ele["rScanStatus"] = "N";
           ele.coupons.forEach((couponData: any) => {
             const txn = transactionMap.get(couponData.coupon);
 
             // Add QR Scan Status
             couponData.qrScanStatus = txn ? "Scanned" : "Not Scanned";
+            couponData.mScanStatus = "N";
+            couponData.rScanStatus = "N";
+
+            if (txn) {
+              const scannedCustomerType = String(
+                txn.customerType || couponData.customerType || "",
+              ).toLowerCase();
+              if (scannedCustomerType === "mechanic") {
+                couponData.mScanStatus = "Y";
+                ele["mScanStatus"] = "Y";
+              } else if (scannedCustomerType === "retailer") {
+                couponData.rScanStatus = "Y";
+                ele["rScanStatus"] = "Y";
+              }
+            }
 
             // Add Invoice info from sales
             if (txn && txn.salesid) {
@@ -1042,4 +1059,4 @@ export class CouponProfileService {
       throw new InternalServerErrorException('Error while replacing packing slip: ' + e.message);
     }
   }
-}  
+}

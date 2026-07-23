@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Get, Query, UseInterceptors, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Body, Controller, Post, Get, Query, UseInterceptors } from '@nestjs/common';
 import { PackingListService } from '../../services/packing-list.service';
 import { ImportPackingListMultipleDto } from '../../dto/packing-list.dto';
 import { TransformInterceptor } from 'src/common/dispatchers/transform.interceptor';
@@ -14,6 +14,18 @@ export class PackingListController {
     @Post('import')
     async importPackingList(@Body() importDto: ImportPackingListMultipleDto) {
         return this.packingListService.importPackingList(importDto);
+    }
+
+    @ApiOperation({ summary: 'Update invoice and distributor details from the QR update template' })
+    @Post('import-qr-update')
+    async importQrUpdateTemplate(@Body() body: { data?: Record<string, any>[] } | Record<string, any>[]) {
+        return this.packingListService.importQrUpdateTemplate(body);
+    }
+
+    @ApiOperation({ summary: 'Download the empty QR update template headings' })
+    @Get('qr-update-template')
+    async getQrUpdateTemplate() {
+        return this.packingListService.getQrUpdateTemplate();
     }
 
     @ApiOperation({ summary: 'Get all packing lists' })
