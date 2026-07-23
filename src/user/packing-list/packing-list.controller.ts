@@ -41,6 +41,7 @@ export class PackingListController {
     @ApiOperation({ summary: 'Export all packing lists' })
     @Get('export-all')
     async exportAll() {
-        return this.packingListService.exportAll();
+        const data = await this.packingListService.exportAll();
+        return { data };
     }
 }

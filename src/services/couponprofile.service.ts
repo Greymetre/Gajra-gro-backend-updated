@@ -384,21 +384,41 @@ export class CouponProfileService {
         transactionMap.set(txn.coupon, txn);
       });
 
-      // Fetch PackingList details
+      // Fetch PackingList details. Trim the profile values because historical
+      // coupon profiles can contain leading/trailing spaces.
+      const exportPackingLists = Array.from(new Set(
+        data
+          .map(ele => String(ele.packingList || "").trim())
+          .filter(Boolean),
+      ));
       const packingListDetails = await this.packingListModel.find({
-        packingList: { $in: Array.from(new Set(data.map(ele => ele.packingList).filter(Boolean))) }
-      }).lean();
+        packingList: { $in: exportPackingLists }
+      }).collation({ locale: "en", strength: 2 }).lean();
       const packingListDetailsMap = new Map<string, any>();
       packingListDetails.forEach(detail => {
-        packingListDetailsMap.set(detail.packingList, detail);
+        packingListDetailsMap.set(
+          String(detail.packingList || "").trim().toUpperCase(),
+          detail,
+        );
       });
 
       data.forEach((ele) => {
+        const packingListKey = String(ele.packingList || "").trim().toUpperCase();
+        const plDetail = packingListDetailsMap.get(packingListKey);
+
+        // Keep these values on the parent export row as well as each coupon row.
+        ele["packingSlipNo"] = String(ele.packingList || "").trim();
+        ele["invoiceNo"] = plDetail?.invoiceNo || "";
+        ele["invoiceDate"] = plDetail?.invoiceDate || "";
+        ele["dealerCode"] = plDetail?.dealerCode || "";
+        ele["dealerName"] = plDetail?.dealerName || "";
+        ele["state"] = plDetail?.state || "";
+        ele["city"] = plDetail?.city || "";
+        ele["mScanStatus"] = "N";
+        ele["rScanStatus"] = "N";
         if (ele.coupons && ele.coupons.length > 0) {
           ele["mechanicCoupons"] = [];
           ele["retailerCoupons"] = [];
-          ele["mScanStatus"] = "N";
-          ele["rScanStatus"] = "N";
           ele.coupons.forEach((couponData: any) => {
             const txn = transactionMap.get(couponData.coupon);
 
@@ -449,7 +469,6 @@ export class CouponProfileService {
             }
 
             // Override with data from PackingList model if available
-            const plDetail = packingListDetailsMap.get(ele.packingList);
             if (plDetail) {
               if (plDetail.invoiceNo) couponData.invoiceNo = plDetail.invoiceNo;
               if (plDetail.invoiceDate) couponData.invoiceDate = plDetail.invoiceDate;
@@ -460,7 +479,7 @@ export class CouponProfileService {
             }
 
             // Add packing slip from parent
-            couponData.packingSlipNo = ele.packingList || "";
+            couponData.packingSlipNo = String(ele.packingList || "").trim();
 
             if (couponData.customerType == "Mechanic") {
               ele["mechanicCoupons"].push(couponData);
