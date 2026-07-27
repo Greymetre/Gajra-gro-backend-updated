@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, InternalServerErrorException } from '@
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { PackingList, PackingListDocument } from '../entities/packing-list.entity';
+import { CouponProfile, CouponProfileDocument } from '../entities/couponprofile.entity';
 import { ImportPackingListMultipleDto } from '../dto/packing-list.dto';
 
 @Injectable()
@@ -18,6 +19,7 @@ export class PackingListService {
 
     constructor(
         @InjectModel(PackingList.name) private readonly packingListModel: Model<PackingListDocument>,
+        @InjectModel(CouponProfile.name) private readonly couponProfileModel: Model<CouponProfileDocument>,
     ) { }
 
     async importPackingList(importDto: ImportPackingListMultipleDto) {
@@ -63,18 +65,43 @@ export class PackingListService {
                 };
             });
 
-            const packingLists = normalizedRows.map(row => row.packingList);
-            const existing = await this.packingListModel.find(
-                { packingList: { $in: packingLists } },
-                { packingList: 1 },
-            ).lean();
-            const existingPackingLists = new Set(existing.map(row => row.packingList));
+            const normalizePackingList = (packingList: string) =>
+                packingList.trim().toUpperCase();
+            const packingLists = normalizedRows.map(row =>
+                normalizePackingList(row.packingList),
+            );
+
+            // Generated coupon data stores the Packing Slip number in
+            // couponprofiles.couponInfo.packingList. This is the source used to
+            // validate imports; packinglists is the destination and may not have
+            // a record yet.
+            const couponProfilePackingLists = await this.couponProfileModel.aggregate([
+                { $unwind: '$couponInfo' },
+                {
+                    $project: {
+                        packingList: {
+                            $toUpper: {
+                                $trim: {
+                                    input: { $ifNull: ['$couponInfo.packingList', ''] },
+                                },
+                            },
+                        },
+                    },
+                },
+                { $match: { packingList: { $in: packingLists } } },
+                { $group: { _id: '$packingList' } },
+            ]).exec();
+            const validPackingLists = new Set(
+                couponProfilePackingLists.map(row => row._id),
+            );
             const missingPackingLists = Array.from(new Set(
-                packingLists.filter(packingList => !existingPackingLists.has(packingList)),
+                normalizedRows
+                    .filter(row => !validPackingLists.has(normalizePackingList(row.packingList)))
+                    .map(row => row.packingList),
             ));
 
             const rowsToUpdate = normalizedRows.filter(row =>
-                existingPackingLists.has(row.packingList),
+                validPackingLists.has(normalizePackingList(row.packingList)),
             );
 
             if (rowsToUpdate.length === 0) {
@@ -89,6 +116,7 @@ export class PackingListService {
                     updateOne: {
                         filter: { packingList },
                         update: { $set: details },
+                        upsert: true,
                     },
                 })),
             );
@@ -102,6 +130,7 @@ export class PackingListService {
                     updatedCount: rowsToUpdate.length,
                     matchedCount: result.matchedCount,
                     modifiedCount: result.modifiedCount,
+                    insertedCount: result.upsertedCount,
                     skippedCount: missingPackingLists.length,
                     missingPackingLists,
                 },

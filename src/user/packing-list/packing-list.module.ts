@@ -3,11 +3,15 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { PackingListController } from './packing-list.controller';
 import { PackingListService } from '../../services/packing-list.service';
 import { PackingList, PackingListSchema } from '../../entities/packing-list.entity';
+import { CouponProfile, CouponProfileSchema } from '../../entities/couponprofile.entity';
 import { LoginMiddleware } from 'src/common/middleware/login.middleware';
 
 @Module({
     imports: [
-        MongooseModule.forFeature([{ name: PackingList.name, schema: PackingListSchema }]),
+        MongooseModule.forFeature([
+            { name: PackingList.name, schema: PackingListSchema },
+            { name: CouponProfile.name, schema: CouponProfileSchema },
+        ]),
     ],
     controllers: [PackingListController],
     providers: [PackingListService],
