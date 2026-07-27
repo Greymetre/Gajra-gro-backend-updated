@@ -73,15 +73,19 @@ export class PackingListService {
                 packingLists.filter(packingList => !existingPackingLists.has(packingList)),
             ));
 
-            if (missingPackingLists.length > 0) {
+            const rowsToUpdate = normalizedRows.filter(row =>
+                existingPackingLists.has(row.packingList),
+            );
+
+            if (rowsToUpdate.length === 0) {
                 throw new BadRequestException({
-                    message: `Some Packing Slip No values do not exist: ${missingPackingLists.join(', ')}`,
+                    message: `No Packing Slip No values exist: ${missingPackingLists.join(', ')}`,
                     missingPackingLists,
                 });
             }
 
             const result = await this.packingListModel.bulkWrite(
-                normalizedRows.map(({ packingList, ...details }) => ({
+                rowsToUpdate.map(({ packingList, ...details }) => ({
                     updateOne: {
                         filter: { packingList },
                         update: { $set: details },
@@ -90,10 +94,17 @@ export class PackingListService {
             );
 
             return {
-                message: 'Packing list invoice and distributor data updated successfully',
-                count: normalizedRows.length,
-                matchedCount: result.matchedCount,
-                modifiedCount: result.modifiedCount,
+                message: missingPackingLists.length > 0
+                    ? 'Available Packing Slip records were updated; missing records were skipped'
+                    : 'Packing list invoice and distributor data updated successfully',
+                data: {
+                    submittedCount: normalizedRows.length,
+                    updatedCount: rowsToUpdate.length,
+                    matchedCount: result.matchedCount,
+                    modifiedCount: result.modifiedCount,
+                    skippedCount: missingPackingLists.length,
+                    missingPackingLists,
+                },
             };
         } catch (error) {
             if (error instanceof BadRequestException) {
