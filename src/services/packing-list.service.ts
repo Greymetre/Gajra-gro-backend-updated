@@ -75,7 +75,7 @@ export class PackingListService {
 
             if (missingPackingLists.length > 0) {
                 throw new BadRequestException({
-                    message: 'Some Packing Slip No values do not exist',
+                    message: `Some Packing Slip No values do not exist: ${missingPackingLists.join(', ')}`,
                     missingPackingLists,
                 });
             }

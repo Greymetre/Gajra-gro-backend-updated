@@ -27,9 +27,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
       firstErrorMessage = firstErrorObject[Object.keys(firstErrorObject)[0]];
     }
+
+    const missingPackingLists = Array.isArray(exception.response?.missingPackingLists)
+      ? exception.response.missingPackingLists
+      : undefined;
+
     return response.status(status).json({
       isError: true,
       message: firstErrorMessage || exception.message || 'Internal server error.',
+      ...(missingPackingLists ? { missingPackingLists } : {}),
     });
   }
 
