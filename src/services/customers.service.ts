@@ -1980,22 +1980,60 @@ export class CustomersService {
   };
 
   public async remainingCustomerWelcomePoints(customerIdDTO: CustomerIdArrayDTO): Promise<any> {
-    const refno = await this.getNewRefNoTransaction();
-    const mappedArray = await Promise.all(customerIdDTO.customerids.map(async (customer: any, index) => {
-      let customerType = await this.customerModel.findOne({ _id: customer })
-      return { customerType: customerType.customerType, customerid: ObjectId(customer), points: 50, pointType: 'Welcome Point', transactionType: 'Cr', refno: refno + index }
-    })
-    );
-    if (Array.isArray(mappedArray) && mappedArray.length) {
-      const insertedcoupons = await this.transactionModel.insertMany(mappedArray).then((result) => {
-        return result;
-      })
-        .catch(err => {
-          throw new InternalServerErrorException(err);
-        });
-      return insertedcoupons
-    }
-    return new GetCustomerInfoDto(mappedArray);
+    return await Promise.all(customerIdDTO.customerids.map(async (customerid: any) => {
+      const customer = await this.customerModel.findById(customerid).select('customerType').exec();
+
+      if (!customer) {
+        return {
+          customerid,
+          credited: false,
+          message: 'Customer not found',
+        };
+      }
+
+      if (customer.customerType !== 'Mechanic') {
+        return {
+          customerid,
+          credited: false,
+          message: 'Welcome points can only be credited to a Mechanic',
+        };
+      }
+
+      const existingWelcomeTransaction = await this.transactionModel.findOne({
+        customerid: ObjectId(customerid),
+        transactionType: 'Cr',
+        pointType: /^welcome point$/i,
+      }).select('_id points').lean().exec();
+
+      if (existingWelcomeTransaction) {
+        return {
+          customerid,
+          credited: false,
+          alreadyCredited: true,
+          points: existingWelcomeTransaction.points,
+          message: 'Welcome points already credited',
+        };
+      }
+
+      const refno = await this.getNewRefNoTransaction();
+      const transaction = await this.transactionModel.create({
+        customerType: customer.customerType,
+        customerid: ObjectId(customerid),
+        points: 50,
+        pointType: 'Welcome Point',
+        transactionType: 'Cr',
+        refno,
+      });
+
+      return {
+        customerid,
+        credited: true,
+        alreadyCredited: false,
+        points: 50,
+        transactionid: transaction._id,
+        message: '50 welcome points credited successfully',
+      };
+    }));
   };
 
   public async kycVerified(kycVerifiedDTO: KycVerifiedDTO): Promise<any> {
