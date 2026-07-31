@@ -824,6 +824,7 @@ export class TransactionsService {
     productid?: any;
     couponGg?: string;
     createdBy: any;
+    schemeReferenceDate?: Date;
   }): Promise<any[]> {
     const setting = await this.projectSettingModel
       .findOne({})
@@ -842,7 +843,7 @@ export class TransactionsService {
       throw new BadRequestException('Product not exist');
     }
 
-    const schemes = await this.getActiveSchemes();
+    const schemes = await this.getActiveSchemes(params.schemeReferenceDate);
     const validSchemes = schemes.filter((scheme) =>
       scheme.customerType.includes(customerInfo.customerType)
     );
@@ -1343,8 +1344,28 @@ export class TransactionsService {
   //   }
   // };
 
-  async getActiveSchemes(): Promise<any> {
-    return await this.schemeModel.find({ startedAt: { $lt: new Date() }, endedAt: { $gt: new Date() }, active: true }).select('schemeDetail schemeType schemeName customerType customers states cities basedOn frequency').exec()
+  async getActiveSchemes(referenceDate?: Date): Promise<any> {
+    const date = referenceDate ? new Date(referenceDate) : new Date();
+    if (isNaN(date.getTime())) {
+      throw new BadRequestException('Invalid scheme reference date');
+    }
+
+    // Scheme start/end values are date-only fields stored at 00:00 UTC.
+    // Resolve the reference timestamp to its India calendar date so an end
+    // date remains valid through 23:59:59 IST for scans and damage entries.
+    const indiaOffsetInMilliseconds = 330 * 60 * 1000;
+    const indiaDate = new Date(date.getTime() + indiaOffsetInMilliseconds);
+    const schemeDate = new Date(Date.UTC(
+      indiaDate.getUTCFullYear(),
+      indiaDate.getUTCMonth(),
+      indiaDate.getUTCDate(),
+    ));
+
+    return await this.schemeModel.find({
+      startedAt: { $lte: schemeDate },
+      endedAt: { $gte: schemeDate },
+      active: true,
+    }).select('schemeDetail schemeType schemeName customerType customers states cities basedOn frequency').exec()
   };
 
   async getScanedCoupons(toscaned: any): Promise<any> {
@@ -2224,6 +2245,7 @@ export class TransactionsService {
                 productid: statusCouponDto.productid,
                 customer: findCustomer,
                 createdBy: authInfo._id,
+                schemeReferenceDate: findInvalidCoupon.createdAt,
               });
 
               const customerInfo = await this.getCustomerProfileInfo(findCustomer._id);
@@ -2385,6 +2407,7 @@ export class TransactionsService {
               couponGg: addInvalidCouponDTO.couponGg,
               customer: findCustomer,
               createdBy: authInfo._id,
+              schemeReferenceDate: new Date(),
             });
 
             const customerInfo = await this.getCustomerProfileInfo(findCustomer._id);
