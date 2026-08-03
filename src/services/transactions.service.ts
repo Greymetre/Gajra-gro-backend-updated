@@ -902,7 +902,7 @@ export class TransactionsService {
         pointType: scheme.schemeName || 'Coupon Scan',
         modifyByid: params.createdBy,
         createdBy: params.createdBy,
-        createdAt: new Date(),
+        createdAt: params.schemeReferenceDate ? new Date(params.schemeReferenceDate) : new Date(),
         customerType: params.customer.customerType,
       });
     }
@@ -1959,7 +1959,10 @@ export class TransactionsService {
         throw new BadRequestException("Customer not exit")
       }
 
-      const coupon = new this.invalidCouponModel({ ...addInvalidCouponDTO, createdAt: new Date() });
+      const createdAt = addInvalidCouponDTO.createdAt
+        ? new Date(`${addInvalidCouponDTO.createdAt}T00:00:00.000Z`)
+        : new Date();
+      const coupon = new this.invalidCouponModel({ ...addInvalidCouponDTO, createdAt });
 
 
       if (coupon.save()) {
@@ -2250,7 +2253,7 @@ export class TransactionsService {
 
               const customerInfo = await this.getCustomerProfileInfo(findCustomer._id);
               await this.handleTransactions(transactions, customerInfo);
-              await this.invalidCouponModel.findByIdAndUpdate({ _id: statusCouponDto.invalidCouponid }, { createdAt: new Date(), statusType: statusCouponDto.statusType, remark: statusCouponDto.remark, modifyByid: authInfo._id })
+              await this.invalidCouponModel.findByIdAndUpdate({ _id: statusCouponDto.invalidCouponid }, { statusType: statusCouponDto.statusType, remark: statusCouponDto.remark, modifyByid: authInfo._id })
               const totalPoints = transactions.reduce((sum, transaction) => sum + Number(transaction.points || 0), 0);
               return { transactions, isError: false, message: `${totalPoints} points received successfully ` }
             }
@@ -2407,7 +2410,9 @@ export class TransactionsService {
               couponGg: addInvalidCouponDTO.couponGg,
               customer: findCustomer,
               createdBy: authInfo._id,
-              schemeReferenceDate: new Date(),
+              schemeReferenceDate: addInvalidCouponDTO.createdAt
+                ? new Date(`${addInvalidCouponDTO.createdAt}T00:00:00.000Z`)
+                : new Date(),
             });
 
             const customerInfo = await this.getCustomerProfileInfo(findCustomer._id);
