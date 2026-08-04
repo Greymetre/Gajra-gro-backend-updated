@@ -140,11 +140,6 @@ export class AddInvalidCouponDTO {
   @IsOptional()
   statusType: string;
 
-  @ApiProperty()
-  @IsDateString()
-  @IsOptional()
-  createdAt: string;
-
 }
 
 
