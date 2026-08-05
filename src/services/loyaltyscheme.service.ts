@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, InternalServerErrorException } from '@
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Loyaltyscheme, LoyaltyschemeDocument } from '../entities/loyaltyscheme.entity';
+import { Product, ProductDocument } from '../entities/product.entity';
 import { CreateLoyaltyschemeDto, ImportSchemeDetailDto, LoyaltyschemeIDDto, StatusLoyaltyschemeDto, UpdateLoyaltyschemeDto } from '../user/loyaltyscheme/dto/request-loyaltyscheme.dto';
 import { GetLoyaltyschemeInfoDto } from '../user/loyaltyscheme/dto/response-loyaltyscheme.dto';
 import { Request } from 'express';
@@ -10,7 +11,58 @@ import { groupBy } from 'lodash';
 const ObjectId = require('mongoose').Types.ObjectId;
 @Injectable()
 export class LoyaltyschemeService {
-  constructor(@InjectModel(Loyaltyscheme.name) private loyaltyschemeModel: Model<LoyaltyschemeDocument>) { }
+  constructor(
+    @InjectModel(Loyaltyscheme.name) private loyaltyschemeModel: Model<LoyaltyschemeDocument>,
+    @InjectModel(Product.name) private productModel: Model<ProductDocument>,
+  ) { }
+
+  async resolveImportedSchemeDetails(rows: Array<{ productNo: string; points: string | number }>): Promise<any> {
+    if (!Array.isArray(rows) || !rows.length) {
+      throw new BadRequestException('The Excel file does not contain any product rows');
+    }
+
+    const normalizedRows = rows.map((row, index) => ({
+      productNo: String(row.productNo || '').trim(),
+      points: String(row.points ?? '').trim(),
+      row: index + 2,
+    }));
+    const invalid = normalizedRows.filter(row => !row.productNo || row.points === '' || !Number.isFinite(Number(row.points)));
+    if (invalid.length) {
+      throw new BadRequestException(`Invalid GG Number or Percentage/Point at Excel row(s): ${invalid.map(row => row.row).join(', ')}`);
+    }
+
+    const duplicateCodes = normalizedRows
+      .map(row => row.productNo)
+      .filter((code, index, codes) => codes.indexOf(code) !== index);
+    if (duplicateCodes.length) {
+      throw new BadRequestException(`Duplicate GG Number(s): ${[...new Set(duplicateCodes)].join(', ')}`);
+    }
+
+    const products = await this.productModel.find({
+      productNo: { $in: normalizedRows.map(row => row.productNo) },
+    }).select('_id productNo categoryid subcategoryid name').lean().exec();
+    const productByNumber = new Map(products.map(product => [product.productNo, product]));
+    const missing = normalizedRows.filter(row => !productByNumber.has(row.productNo)).map(row => row.productNo);
+    if (missing.length) {
+      throw new BadRequestException(`GG Number(s) not found: ${missing.join(', ')}`);
+    }
+
+    const grouped = new Map<string, any>();
+    normalizedRows.forEach(row => {
+      const product: any = productByNumber.get(row.productNo);
+      if (!grouped.has(row.points)) {
+        grouped.set(row.points, {
+          detailName: `${row.points} Percentage/Point`, products: [], categories: [], subcategories: [], points: row.points,
+        });
+      }
+      const detail = grouped.get(row.points);
+      detail.products.push(product._id);
+      if (product.categoryid && !detail.categories.some(id => id.equals(product.categoryid))) detail.categories.push(product.categoryid);
+      if (product.subcategoryid && !detail.subcategories.some(id => id.equals(product.subcategoryid))) detail.subcategories.push(product.subcategoryid);
+    });
+
+    return { schemeDetail: [...grouped.values()], products };
+  }
   
   public async createLoyaltyscheme(createLoyaltyschemeDto: CreateLoyaltyschemeDto, req: Request): Promise<any> {
     const authInfo = await getAuthUserInfo(req.headers)

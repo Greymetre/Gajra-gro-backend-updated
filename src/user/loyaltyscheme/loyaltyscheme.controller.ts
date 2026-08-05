@@ -17,6 +17,14 @@ import { TransformInterceptor } from 'src/common/dispatchers/transform.intercept
 export class LoyaltyschemeController {
   constructor(private readonly loyaltyService: LoyaltyschemeService) {}
 
+  @ApiOperation({ summary: 'Validate GG Numbers and prepare loyalty scheme details from Excel rows' })
+  @Post('resolve-import')
+  @HttpCode(200)
+  protected async resolveImport(@Body() body: { rows: Array<{ productNo: string; points: string | number }> }): Promise<any> {
+    const data = await this.loyaltyService.resolveImportedSchemeDetails(body.rows);
+    return { data };
+  }
+
   @ApiOperation({ summary: 'Add Loyaltyscheme' })
   @ApiResponse({ status: 200, description: 'Success', type: GetLoyaltyschemeInfoDto })
   @ApiBadRequestResponse({ description: 'Invalid id or password' })
