@@ -762,7 +762,7 @@ export class TransactionsService {
           let totalTransactionPoints = totalPoints + findPoint[0].totalTransaction;
 
           if (totalTransactionPoints >= 300) {
-            await PushNotification(
+            await this.sendPushNotificationSafely(
               findPoint[0].deviceToken,
               "Redemption is ON!! 💸💸",
               `${findPoint[0].firmName}, You are eligible to redeem points`,
@@ -794,7 +794,7 @@ export class TransactionsService {
           ]);
 
           if (findRedemption.length > 0) {
-            transactions.forEach(async (transaction) => {
+            for (const transaction of transactions) {
               const pointTypeMessages = {
                 "Gajra Loyalty2": "Gajra Gro + Loyalty",
                 "boaster Scheme": "MRP Lable scheme",
@@ -803,18 +803,36 @@ export class TransactionsService {
               };
 
               const pointTypeMessage = pointTypeMessages[transaction.pointType] || transaction.pointType;
-              await PushNotification(
+              await this.sendPushNotificationSafely(
                 findRedemption[0].deviceToken,
                 "Scan Successful 💸💸",
                 `${findRedemption[0].firmName}, you have successfully earned ${transaction.points} points in ${pointTypeMessage}`,
                 "History"
               );
-            });
+            }
           }
         });
       }
     } catch (error) {
       throw new InternalServerErrorException('Error in handleTransactions: ' + error.message);
+    }
+  }
+
+  private async sendPushNotificationSafely(
+    deviceToken: string,
+    title: string,
+    body: string,
+    key: string,
+  ): Promise<void> {
+    if (!deviceToken) {
+      return;
+    }
+
+    try {
+      await PushNotification(deviceToken, title, body, key);
+    } catch (error) {
+      // A stale/unregistered device token must not fail the transaction flow.
+      console.error('Optional push notification failed:', error);
     }
   }
 
