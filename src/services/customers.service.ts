@@ -557,7 +557,7 @@ export class CustomersService {
 
   public async updateAddress(addressDto: AddressDTO, customerid): Promise<any> {
     try {
-      return await this.customerModel
+      const customer = await this.customerModel
         .findOneAndUpdate(
           { _id: ObjectId(customerid) },
           {
@@ -575,6 +575,9 @@ export class CustomersService {
           { new: true, upsert: true, setDefaultsOnInsert: false }
         )
         .lean();
+
+      await this.signupFromGajraMlp(customer);
+      return customer;
     } catch (err) {
       throw new BadRequestException(err);
     }
@@ -1623,7 +1626,17 @@ export class CustomersService {
   };
 
   public async signupFromGajraMlp(data): Promise<any> {
-    await axios.post('https://gajragears.fieldkonnect.io/api/signupFromGajraMlp', data).then(async (response: any) => {
+    const customer = typeof data?.toObject === 'function' ? data.toObject() : { ...data };
+    const coordinates = customer?.location?.coordinates || customer?.address?.coordinates;
+    const payload = Array.isArray(coordinates) && coordinates.length >= 2
+      ? {
+          ...customer,
+          latitude: Number(coordinates[1]),
+          longitude: Number(coordinates[0]),
+        }
+      : customer;
+
+    await axios.post('https://gajragears.fieldkonnect.io/api/signupFromGajraMlp', payload).then(async (response: any) => {
       return response
     })
       .catch((error) => {
