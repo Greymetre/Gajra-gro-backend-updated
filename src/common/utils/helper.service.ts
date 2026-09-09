@@ -17,6 +17,7 @@ import axios from "axios";
 import * as bcrypt from 'bcrypt';
 import * as path from 'path';
 import { getS3BucketName, getS3Client } from './s3-client';
+import { uploadImages, uploadStoredFile } from './storage-upload';
 
 
 import * as admin from 'firebase-admin';
@@ -73,24 +74,7 @@ export class UploadFilesHelper {
 
 
   static async uploadToS3(file: Express.Multer.File, folderName: string): Promise<string> {
-    const fileStream = fs.createReadStream(file.path);
-    const fileName = `uploaded/${folderName}/${file.filename}`;
-
-    const uploadParams = {
-      Bucket: getS3BucketName(),
-      Key: fileName,
-      Body: fileStream,
-      ContentType: file.mimetype
-    };
-
-    try {
-      const data = await getS3Client().upload(uploadParams).promise();
-      console.log(`File uploaded successfully at ${data.Location}`);
-      return data.Location;
-    } catch (error) {
-      console.error(`Error uploading file ${file.filename}:`, error);
-      throw error;
-    }
+    return uploadStoredFile(file, folderName);
   }
 };
 
@@ -453,37 +437,11 @@ export class CronHelper {
 }
 
 
-export const imageName = async (req, images) => {
-  try {
-    let uploadedUrls = []
-    if (images != undefined && images != "undefined" && images.length > 0) {
-      const folderName = req.url.split("/")[3];
-      uploadedUrls = await Promise.all(
-        images.map(async (file) => {
-          if (file.mimetype != 'image/jpeg' && file.mimetype != 'image/png') {
-            throw new Error('Only JPEG and PNG files are allowed.');
-          }
-          const url = await UploadFilesHelper.uploadToS3(file, folderName);
-          fs.unlinkSync(file.path);
-          const relativePath = `uploaded/${folderName}/${url.split('/').pop()}`;
-          return relativePath;
-        })
-      );
-    }
-
-
-    return uploadedUrls;
-  } catch (error) {
-    console.log(error, 4534)
-    throw new Error('Only JPEG and PNG files are allowed.');
-  }
-
-
-};
+export const imageName = uploadImages;
 
 export const uploadFolderToS3 = async (folderPath: string, s3Bucket: string, s3Folder: string) => {
   try {
-    const bucketName = s3Bucket || getS3BucketName();
+    const bucketName = getS3BucketName();
 
     await fsPromises.access(folderPath);
     const files = await fsPromises.readdir(folderPath);
@@ -511,64 +469,5 @@ export const uploadFolderToS3 = async (folderPath: string, s3Bucket: string, s3F
 
 
 export const listImagesByTimeWithVersions = async (prefix = '', startTime, endTime) => {
-  const params = {
-    Bucket: getS3BucketName(),
-    Prefix: prefix,
-  };
-
-  try {
-    const filteredFiles = [];
-    let isTruncated = true;
-    let keyMarker;
-    let versionIdMarker;
-
-    while (isTruncated) {
-      const data = await getS3Client().listObjectVersions({
-        ...params,
-        KeyMarker: keyMarker,
-        VersionIdMarker: versionIdMarker,
-      }).promise();
-
-      // Filter images by file type and timestamp
-      const images = data.Versions?.filter(file => {
-        // console.log(`Checking File: ${file.Key}, LastModified: ${file.LastModified}`);
-        return (
-          file.Key?.match(/\.(jpg|jpeg|png|gif|webp|bmp)$/i) &&
-          file.LastModified &&
-          file.LastModified >= startTime &&
-          file.LastModified <= endTime
-        );
-      });
-
-      if (images && images.length > 0) {
-        for (const file of images) {
-          console.log(`Deleting File: ${file.Key}, VersionId: ${file.VersionId}, LastModified: ${file.LastModified}`);
-          await getS3Client().deleteObject({
-            Bucket: getS3BucketName(),
-            Key: file.Key,
-            VersionId: file.VersionId, // Delete specific version
-          }).promise();
-        }
-      }
-
-      // images?.forEach(file => {
-      //     if (file.Key && file.VersionId) {
-      //         filteredFiles.push({
-      //             Key: file.Key,
-      //             VersionId: file.VersionId,
-      //         });
-      //     }
-      // });
-
-      isTruncated = data.IsTruncated || false;
-      keyMarker = data.NextKeyMarker;
-      versionIdMarker = data.NextVersionIdMarker;
-    }
-
-    console.log(`${filteredFiles.length} Filtered Images:`, filteredFiles);
-    return filteredFiles;
-  } catch (error) {
-    console.error(`Error listing images: ${error.message}`);
-    throw error;
-  }
+  throw new Error('S3 version-based deletion is disabled for R2. Use explicit object keys.');
 };

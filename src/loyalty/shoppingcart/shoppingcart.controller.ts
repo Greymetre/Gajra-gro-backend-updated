@@ -3,8 +3,7 @@ import { ShoppingcartService } from './shoppingcart.service';
 import { ApiBadRequestResponse, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiOperation, ApiResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { SuccessResponse } from '../../common/interfaces/response';
 import { Request } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express/multer';
-import { diskStorage } from 'multer';
+import { FileFieldsInterceptor } from '@nestjs/platform-express/multer';
 import { TransformInterceptor } from 'src/common/dispatchers/transform.interceptor';
 import { ShoppingCartDTO } from 'src/dto/shoppingcart-dto'
 
@@ -23,11 +22,7 @@ export class ShoppingcartController {
   @Post()
   @HttpCode(200)
   @UsePipes(ValidationPipe)
-  @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: './uploaded/schemes'
-    })
-  }))
+  @UseInterceptors(FileFieldsInterceptor([]))
   protected async createBeatschedule(@Req() req: Request, @Body() shoppingCartDto: ShoppingCartDTO): Promise<any> {
     return this.shoppingcartService.createBeatschedule(shoppingCartDto, req);
   };

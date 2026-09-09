@@ -2552,7 +2552,7 @@ export class TransactionsService {
       console.log('Folder Path:', paths);
 
 
-      await uploadFolderToS3(paths, process.env.BUCKET_NAME, 'uploaded/transactions');
+      await uploadFolderToS3(paths, undefined, 'uploaded/transactions');
     } catch (error) {
       console.error('Error calling uploadFolderToS3:', error);
     }

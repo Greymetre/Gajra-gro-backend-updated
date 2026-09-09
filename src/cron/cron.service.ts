@@ -1,24 +1,3 @@
-// import { Injectable } from '@nestjs/common';
-// import { Cron } from '@nestjs/schedule';
-// import { CronHelper } from 'src/common/utils/helper.service'; // Update the import path to match the correct location
-// import { DashboardService } from 'src/services/dashboard.service';
-
-// @Injectable()
-// export class CronService {
-//   constructor(private readonly cronHelper: CronHelper) {} // Inject the CronHelper service
-
-//   // @Cron('* * * * * *') // Define your cron schedule here
-//   async cronJob() {
-//     try {
-//        this.cronHelper.cronFunction(); // Use the instance of cronHelper
-
-//       console.log('Cron job executed!');
-//       // Your cron job logic here...
-//     } catch (error) {
-//       console.error('Error in the cron job:', error);
-//     }
-//   }
-// }
 import { Injectable } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { CronHelper } from 'src/common/utils/helper.service';
@@ -30,6 +9,7 @@ export class CronService {
   @Cron(`30 5 * * * `) 
 
   async cronJob() {
+    if (process.env.ENABLE_CRON_JOBS === 'false') return;
     try {
       console.log('Cron job executed!');
       await this.cronHelper.cronFunction();
@@ -42,6 +22,7 @@ export class CronService {
 
   @Cron('0 * * * *') 
   async cronJobForTransaction() {
+    if (process.env.ENABLE_CRON_JOBS === 'false') return;
     try {
 
       await this.cronHelper.cronJobForTransaction();
@@ -53,6 +34,7 @@ export class CronService {
 
   @Cron('* * * * *')
   async cronJobForGajraGro() {
+    if (process.env.ENABLE_CRON_JOBS === 'false') return;
     try {
       console.log("add new User")
       await this.cronHelper.insertManyUsers();

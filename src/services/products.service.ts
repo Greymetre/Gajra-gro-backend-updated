@@ -21,7 +21,7 @@ export class ProductsService {
   public async createProduct(createProductDto: CreateProductDto, req: Request) {
     const authInfo = await getAuthUserInfo(req.headers)
     const product = new this.productModel({ ...createProductDto, createdBy: authInfo._id });
-    if (product.save()) {
+    if (await product.save()) {
       return new GetProductInfoDto(product)
     }
     throw new BadRequestException('Error in Create Product');

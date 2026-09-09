@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, HttpCode, UsePipes, ValidationPipe , Req, UseInterceptors} from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, HttpCode, UsePipes, ValidationPipe , Req, UseInterceptors, UploadedFiles} from '@nestjs/common';
 import { AttendancesService } from '../../services/attendances.service';
 import { ApiBadRequestResponse, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiOperation, ApiResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { CreateAttendanceDto, StatusAttendanceDto, UpdateAttendanceDto } from './dto/request-attendance.dto';
@@ -7,6 +7,7 @@ import { SuccessResponse } from '../../common/interfaces/response';
 import { Request } from 'express';
 import { FileFieldsInterceptor } from '@nestjs/platform-express/multer';
 import { diskStorage } from 'multer';
+import { UploadFilesHelper, imageName } from 'src/common/utils/helper.service';
 import { TransformInterceptor } from 'src/common/dispatchers/transform.interceptor';
 
 @Controller('user/attendances')
@@ -27,10 +28,13 @@ export class AttendancesController {
     { name: 'punchout', maxCount: 1 },
   ],{
     storage: diskStorage({
-      destination: './uploaded/pinchin'
+      destination: UploadFilesHelper.s3DestinationPath,
+      filename: UploadFilesHelper.customFileName
     }),
   }))
-  protected async createAttendance(@Req() req: Request, @Body() createAttendanceDto: CreateAttendanceDto): Promise<any> {
+  protected async createAttendance(@Req() req: Request, @Body() createAttendanceDto: CreateAttendanceDto, @UploadedFiles() files: { pinchin?: Express.Multer.File[]; punchout?: Express.Multer.File[] }): Promise<any> {
+    if (files?.pinchin?.length) createAttendanceDto.punchinImage = (await imageName(req, files.pinchin))[0];
+    if (files?.punchout?.length) createAttendanceDto.punchoutImage = (await imageName(req, files.punchout))[0];
     return this.attendanceService.createAttendance(createAttendanceDto, req);
   };
 
@@ -54,7 +58,18 @@ export class AttendancesController {
   };
 
   @Patch(':id')
-  protected async updateAttendanceInfo(@Param('id') id: string, @Body() updateAttendanceDto: UpdateAttendanceDto) {
+  @UseInterceptors(FileFieldsInterceptor([
+    { name: 'pinchin', maxCount: 1 },
+    { name: 'punchout', maxCount: 1 },
+  ],{
+    storage: diskStorage({
+      destination: UploadFilesHelper.s3DestinationPath,
+      filename: UploadFilesHelper.customFileName
+    }),
+  }))
+  protected async updateAttendanceInfo(@Param('id') id: string, @Req() req: Request, @Body() updateAttendanceDto: UpdateAttendanceDto, @UploadedFiles() files: { pinchin?: Express.Multer.File[]; punchout?: Express.Multer.File[] }) {
+    if (files?.pinchin?.length) updateAttendanceDto.punchinImage = (await imageName(req, files.pinchin))[0];
+    if (files?.punchout?.length) updateAttendanceDto.punchoutImage = (await imageName(req, files.punchout))[0];
     return await this.attendanceService.updateAttendanceInfo(id, updateAttendanceDto);
   };
 

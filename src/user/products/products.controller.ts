@@ -45,7 +45,7 @@ export class ProductsController {
     // createProductDto.images = await files.images && files.images.map(file => { return {  image : (file.path).replace("dist/", "") } })
     // createProductDto.images = await files.images && files.images.map(file => { return {  image : (file.path)} })
     createProductDto.images = await files.images &&  await imageName(req,files.images)
-    return this.productsService.createProduct(createProductDto, req);
+    return { data: await this.productsService.createProduct(createProductDto, req) };
   }
  
   @ApiOperation({ summary: 'Get all products' })
@@ -108,7 +108,7 @@ export class ProductsController {
     // updateProductDto.images = await image && image;
     // let uploadedUrls:any = await imageName(req,files)
     updateProductDto.images =  await files.images && await imageName(req,files.images)
-    return this.productsService.updateProductInfo(id, updateProductDto);
+    return { data: await this.productsService.updateProductInfo(id, updateProductDto) };
   }
 
   @Delete(':id')

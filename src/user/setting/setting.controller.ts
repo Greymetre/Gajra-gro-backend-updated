@@ -48,7 +48,8 @@ export class SettingController {
   },))
 
   // protected async updateProjectSetting(@Req() req: Request, @Body() projectSettingDto: ProjectSettingDto, @UploadedFiles() files: { image?: Express.Multer.File[] }): Promise<any> {
-  protected async updateProjectSetting(@Req() req: Request, @Body() projectSettingDto: ProjectSettingDto): Promise<any> {
+  protected async updateProjectSetting(@Req() req: Request, @Body() projectSettingDto: ProjectSettingDto, @UploadedFiles() files: { image?: Express.Multer.File[] }): Promise<any> {
+    if (files?.image?.length) projectSettingDto.banner = await imageName(req, files.image);
     // projectSettingDto.banner = await files.image && files.image.map(file => file.path)
 
     return this.settingService.updateProjectSetting(projectSettingDto);
@@ -76,13 +77,11 @@ export class SettingController {
   },))
 
   protected async uploadBannerImages(@Req() req: Request, @Body() bannerProjectDto: BannerProjectSettingDTO, @UploadedFiles() files: { image?: Express.Multer.File[] }): Promise<any> {
-    bannerProjectDto.banner = await Promise.all(
-      files.image.map(file => imageName(req, file.path)) 
-    );
+    bannerProjectDto.banner = await imageName(req, files?.image);
     
 
     // bannerProjectDto.banner = await files.image && files.image.map(file => (file.path).replace("dist/", ""))
-    return this.settingService.uploadBannerImages(bannerProjectDto);
+    return { data: await this.settingService.uploadBannerImages(bannerProjectDto) };
   }
 
   @ApiOperation({ summary: 'Add LoyaltySetting' })

@@ -6,7 +6,6 @@ import { GetCouponInfoDto } from './dto/response-coupon.dto';
 import { SuccessResponse } from '../../common/interfaces/response';
 import { Request } from 'express';
 import { FileFieldsInterceptor } from '@nestjs/platform-express/multer';
-import { diskStorage } from 'multer';
 import { TransformInterceptor } from 'src/common/dispatchers/transform.interceptor';
 import { getAuthUserInfo } from 'src/common/utils/jwt.helper';
 import { SearchRequestDto } from 'src/dto/pagination-dto';
@@ -26,15 +25,7 @@ export class CouponsController {
   @Post()
   @HttpCode(200)
   @UsePipes(ValidationPipe)
-  @UseInterceptors(FileFieldsInterceptor([
-    { name: 'pinchin', maxCount: 1 },
-    { name: 'punchout', maxCount: 1 },
-  ], {
-    storage: diskStorage({
-      destination: './uploaded/pinchin'
-    }),
-  }))
-
+  @UseInterceptors(FileFieldsInterceptor([]))
   protected async createCoupon(@Req() req: Request, @Body() createCouponDto: CreateCouponDto): Promise<any> {
     const authInfo = await getAuthUserInfo(req.headers)
     createCouponDto.createdBy = authInfo._id

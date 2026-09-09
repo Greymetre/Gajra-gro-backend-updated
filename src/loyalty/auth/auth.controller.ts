@@ -331,7 +331,7 @@ export class AuthController {
         // var imagepath = await files.image && files.image.map(file => file.path)
         // bankInfoDto.image =  await imagepath && imagepath[0];
         var imagepath =  await files.image && await imageName(req,files.image);
-        bankInfoDto.image = imagepath[0]
+        if (imagepath?.length) bankInfoDto.image = imagepath[0]
         const data = await this.authService.updateBankInfo(req, bankInfoDto);
         return { data };
     };
@@ -372,7 +372,7 @@ export class AuthController {
             filename: UploadFilesHelper.customFileName,
         })
     },))
-    protected async updatePersonalInfo(@Req() req: Request, @Body() personalDetailsDto: CustomerPersonalDetailsDto, @UploadedFiles() files: { avatar?: Express.Multer.File[], shopimage?: Express.Multer.File[], aadharimage?: Express.Multer.File[], gstinimage?: Express.Multer.File[] , panimage?: Express.Multer.File[] , otherimage?: Express.Multer.File[], aadharBackImage?: Express.Multer.File[] , passbookImage?: Express.Multer.File[],upiImage?:Express.Multer.File  } ): Promise<SuccessResponse<any>> {
+    protected async updatePersonalInfo(@Req() req: Request, @Body() personalDetailsDto: CustomerPersonalDetailsDto, @UploadedFiles() files: { avatar?: Express.Multer.File[], shopimage?: Express.Multer.File[], aadharimage?: Express.Multer.File[], gstinimage?: Express.Multer.File[] , panimage?: Express.Multer.File[] , otherimage?: Express.Multer.File[], aadharBackImage?: Express.Multer.File[] , passbookImage?: Express.Multer.File[],upiImage?:Express.Multer.File[]  } ): Promise<SuccessResponse<any>> {
        
         // var avatarpath = await files.avatar && files.avatar.map(file => (file.path))
         // var shopimagepath = await files.shopimage && files.shopimage.map(file => (file.path))

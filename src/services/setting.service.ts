@@ -80,7 +80,7 @@ export class SettingService {
 
   public async uploadBannerImages(createBannetDto: BannerProjectSettingDTO) {
     try {
-      return await this.settingModel.findOneAndUpdate({}, { $push: { banner: createBannetDto.banner } }, { new: true, useFindAndModify: false, upsert: true }).then((banner) => {
+      return await this.settingModel.findOneAndUpdate({}, { $push: { banner: { $each: createBannetDto.banner } } }, { new: true, useFindAndModify: false, upsert: true }).then((banner) => {
         if (!banner) throw new BadRequestException('Error in Image Upload');
         return banner;
       });

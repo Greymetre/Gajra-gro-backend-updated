@@ -374,8 +374,7 @@ export class CustomersController {
       const data = await this.customersService.updateKycInfo(kycInfoDto, customerid);
       return { data };
     } catch (error) {
-      console.log(error);
-
+      throw error;
     }
   }
 

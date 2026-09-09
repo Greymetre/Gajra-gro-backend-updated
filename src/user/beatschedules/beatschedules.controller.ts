@@ -5,8 +5,7 @@ import { CreateBeatscheduleDto, StatusBeatscheduleDto, UpdateBeatscheduleDto } f
 import { GetBeatscheduleInfoDto } from './dto/response-beatschedule.dto';
 import { SuccessResponse } from '../../common/interfaces/response';
 import { Request } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express/multer';
-import { diskStorage } from 'multer';
+import { FileFieldsInterceptor } from '@nestjs/platform-express/multer';
 import { TransformInterceptor } from 'src/common/dispatchers/transform.interceptor';
 
 @Controller('user/beatschedules')
@@ -24,11 +23,7 @@ export class BeatschedulesController {
   @Post()
   @HttpCode(200)
   @UsePipes(ValidationPipe)
-  @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: './uploaded/schemes'
-    })
-  }))
+  @UseInterceptors(FileFieldsInterceptor([]))
   protected async createBeatschedule(@Req() req: Request, @Body() createBeatscheduleDto: CreateBeatscheduleDto): Promise<any> {
     return this.beatscheduleService.createBeatschedule(createBeatscheduleDto, req);
   };

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, HttpCode, UsePipes, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, HttpCode, UsePipes, Req, UnauthorizedException } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiBadRequestResponse, ApiForbiddenResponse, ApiInternalServerErrorResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginRequestDto, MobileRequestDto, EmailRequestDto, changePasswordRequestDto, passwordRequestDto, CheckUserEmailExistDto, CheckUserMobileExistDto } from './dto/auth.request.dto';
@@ -7,11 +7,19 @@ import { SuccessResponse } from '../../common/interfaces/response';
 import { LoginResponseDto } from './dto/auth.response.dto';
 import { ValidationPipe } from '../../validations/validation.pipe';
 import { Request } from 'express';
+import { getAuthUserInfo } from '../../common/utils/jwt.helper';
 @Controller('user/auth')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @UseInterceptors(TransformInterceptor)
 export class AuthController {
     constructor(private readonly authService: AuthService) {}
+    @Get('session')
+    async session(@Req() req: Request) {
+        const user = await getAuthUserInfo(req.headers);
+        if (!user._id) throw new UnauthorizedException('Login required');
+        return { data: { authenticated: true } };
+    }
+
     @ApiOperation({ summary: 'Login into the system' })
     @ApiResponse({ status: 200, description: 'Success', type: LoginResponseDto })
     @ApiBadRequestResponse({ status: 200, description: 'Invalid id or password' })

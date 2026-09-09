@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, HttpCode, UsePipes, ValidationPipe , Req, UseInterceptors} from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, HttpCode, UsePipes, ValidationPipe , Req, UseInterceptors, UploadedFiles} from '@nestjs/common';
 import { CustomervisitService } from '../../services/customervisit.service';
 import { ApiBadRequestResponse, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiOperation, ApiResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { CreateCustomervisitDto, StatusCustomervisitDto, UpdateCustomervisitDto } from './dto/request-customervisit.dto';
@@ -7,6 +7,7 @@ import { SuccessResponse } from '../../common/interfaces/response';
 import { Request } from 'express';
 import { FileFieldsInterceptor } from '@nestjs/platform-express/multer';
 import { diskStorage } from 'multer';
+import { UploadFilesHelper, imageName } from 'src/common/utils/helper.service';
 import { TransformInterceptor } from 'src/common/dispatchers/transform.interceptor';
 
 @Controller('user/customervisit')
@@ -26,10 +27,12 @@ export class CustomervisitController {
     { name: 'checkin', maxCount: 1 },
   ],{
     storage: diskStorage({
-      destination: './uploaded/checkin'
+      destination: UploadFilesHelper.s3DestinationPath,
+      filename: UploadFilesHelper.customFileName
     }),
   }))
-  protected async createCustomervisit(@Req() req: Request, @Body() createCustomervisitDto: CreateCustomervisitDto): Promise<any> {
+  protected async createCustomervisit(@Req() req: Request, @Body() createCustomervisitDto: CreateCustomervisitDto, @UploadedFiles() files: { checkin?: Express.Multer.File[] }): Promise<any> {
+    if (files?.checkin?.length) createCustomervisitDto.visitImage = (await imageName(req, files.checkin))[0];
     return this.customervisitService.createCustomervisit(createCustomervisitDto, req);
   }
 
@@ -59,10 +62,12 @@ export class CustomervisitController {
     { name: 'checkin', maxCount: 1 },
   ],{
     storage: diskStorage({
-      destination: './uploaded/checkin'
+      destination: UploadFilesHelper.s3DestinationPath,
+      filename: UploadFilesHelper.customFileName
     }),
   }))
-  protected async updateCustomervisitInfo(@Param('id') id: string, @Req() req: Request, @Body() updateCustomervisitDto: UpdateCustomervisitDto) {
+  protected async updateCustomervisitInfo(@Param('id') id: string, @Req() req: Request, @Body() updateCustomervisitDto: UpdateCustomervisitDto, @UploadedFiles() files: { checkin?: Express.Multer.File[] }) {
+    if (files?.checkin?.length) updateCustomervisitDto.visitImage = (await imageName(req, files.checkin))[0];
     return await this.customervisitService.updateCustomervisitInfo(id, updateCustomervisitDto);
   }
 

@@ -393,7 +393,7 @@ export class ProjectSettingDto {
   @ApiProperty()
   @IsArray()
   @IsOptional()
-  banner: [string];
+  banner: string[];
 
   @ApiProperty()
   @IsArray()
