@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsNotEmpty, IsNumber, IsArray, IsDefined, IsDateString, IsMongoId, IsObject, ValidateNested } from 'class-validator';
+import { IsOptional, IsString, IsNotEmpty, IsNumber, IsArray, IsDefined, IsDateString, IsMongoId, IsObject, ValidateNested, IsInt, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { Types, ObjectId } from "mongoose";
 import { Optional } from '@nestjs/common';
@@ -188,4 +188,17 @@ export class ProductDropdownDto {
   @IsArray()
   @IsOptional()
   condition: string[];
+}
+
+export class DamageEntryImageDto {
+
+  @IsMongoId()
+  @IsNotEmpty()
+  invalidCouponid: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  index: number;
 }

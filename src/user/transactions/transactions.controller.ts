@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Patch,Query, Param, Delete, HttpCode, Req, UseInterceptors} from '@nestjs/common';
 import { TransactionsService } from '../../services/transactions.service';
 import { ApiBadRequestResponse, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiOperation, ApiResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
-import { CouponsScanDTO, CreateTransactionDto, ProductDropdownDto, StatusCouponDtos, StatusTransactionDto, UpdateTransactionDto } from './dto/request-transaction.dto';
+import { CouponsScanDTO, CreateTransactionDto, DamageEntryImageDto, ProductDropdownDto, StatusCouponDtos, StatusTransactionDto, UpdateTransactionDto } from './dto/request-transaction.dto';
 import { GetTransactionInfoDto } from './dto/response-transaction.dto';
 import { SuccessResponse } from '../../common/interfaces/response';
 import { Request } from 'express';
@@ -129,6 +129,15 @@ export class TransactionsController {
   @Post('/productDropdown')
   protected async productDropdown(@Body() statusCouponDto: ProductDropdownDto) {
     const data =  await this.transactionService.productDropdown(statusCouponDto);
+    return { data };
+  }
+
+  @ApiOperation({ summary: 'Get damage entry image for QR scanning' })
+  @ApiBadRequestResponse({ description: 'Image not found' })
+  @Post('/damageEntryImage')
+  @HttpCode(200)
+  protected async damageEntryImage(@Body() damageEntryImageDto: DamageEntryImageDto): Promise<SuccessResponse<any>> {
+    const data = await this.transactionService.getDamageEntryImage(damageEntryImageDto);
     return { data };
   }
 

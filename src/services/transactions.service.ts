@@ -7,7 +7,7 @@ import { Coupon, CouponDocument } from '../entities/coupon.entity';
 import { Customer, CustomerDocument } from '../entities/customer.entity';
 import { Product, ProductDocument } from '../entities/product.entity';
 import { SettingProject, SettingProjectDocument } from '../entities/setting.project.entity';
-import { CouponsScanDTO, CreateTransactionDto, ProductDropdownDto, StatusCouponDtos, StatusTransactionDto, UpdateTransactionDto } from '../user/transactions/dto/request-transaction.dto';
+import { CouponsScanDTO, CreateTransactionDto, DamageEntryImageDto, ProductDropdownDto, StatusCouponDtos, StatusTransactionDto, UpdateTransactionDto } from '../user/transactions/dto/request-transaction.dto';
 import { AddInvalidCouponDTO, AdminCouponsScanDTO, FilterPaginationInvalidCouponDto, FilterPaginationTransactionDto, ImportCouponTransactionDTO, ImportTransactionDTO } from '../dto/transaction.dto';
 import { GetTransactionInfoDto, GetAllTransactionDto } from '../user/transactions/dto/response-transaction.dto';
 import { Request } from 'express';
@@ -21,6 +21,7 @@ import { InvalidCoupon, InvalidCouponDocument } from 'src/entities/invalidcoupon
 import { CouponProfile, CouponProfileDocument } from 'src/entities/couponprofile.entity';
 import { CustomerIdDTO } from 'src/dto/dashboard-dto';
 import { PackingList, PackingListDocument } from 'src/entities/packing-list.entity';
+import { getS3BucketName, getS3Client } from 'src/common/utils/s3-client';
 const ObjectId = require('mongoose').Types.ObjectId;
 const path = require('path');
 const fs = require('fs');
@@ -2295,6 +2296,32 @@ export class TransactionsService {
       throw new InternalServerErrorException(e.message);
     }
 
+  };
+
+  // Image bytes are served through the API because the public image host does
+  // not send CORS headers, so the admin panel cannot read its pixels to decode QR codes.
+  async getDamageEntryImage(damageEntryImageDto: DamageEntryImageDto): Promise<any> {
+    const entry = await this.invalidCouponModel
+      .findById(damageEntryImageDto.invalidCouponid)
+      .select('couponImage')
+      .lean();
+    const key = entry?.couponImage?.[damageEntryImageDto.index || 0];
+    if (!key) {
+      throw new BadRequestException('Image not found');
+    }
+
+    try {
+      const object = await getS3Client().getObject({ Bucket: getS3BucketName(), Key: key }).promise();
+      return {
+        contentType: object.ContentType || 'image/jpeg',
+        base64: Buffer.from(object.Body as Buffer).toString('base64'),
+      };
+    } catch (e) {
+      if (e?.code === 'NoSuchKey') {
+        throw new BadRequestException('Image not found');
+      }
+      throw new InternalServerErrorException('Error while getting damage entry image: ' + e.message);
+    }
   };
 
   async getAllCustomerInvalidCoupon(customerIdDTO: CustomerIdDTO): Promise<any> {
