@@ -192,15 +192,13 @@ export class CityService {
     await Promise.all(states.map(async (item: any) => {
       await axios.post('https://countriesnow.space/api/v0.1/countries/state/cities', { country: item.countryid.countryName, state: item.stateName }).then(async (response: any) => {
         if (response?.data?.error === false) {
-          const mappedCities = await Promise.all(response?.data?.data.map(async (city: any) => {
-            const citydata = { cityName: city.trim(), state: item.stateName.trim(), country: item.countryid.countryName.trim() }
-            return citydata;
+          // API returns names with diacritics (e.g. "Mānvi"); store plain names and upsert to avoid duplicates
+          const ops = response?.data?.data.map((city: any) => {
+            const citydata = { cityName: city.normalize('NFD').replace(/[̀-ͯ]/g, '').trim(), state: item.stateName.trim(), country: item.countryid.countryName.trim() }
+            return { updateOne: { filter: citydata, update: { $setOnInsert: citydata }, upsert: true } };
+          });
+          await this.cityModel.bulkWrite(ops, { ordered: false }).catch(function (error) {
           })
-          );
-          await this.cityModel.insertMany(mappedCities).then(async (result: any) => {
-          })
-            .catch(function (error) {
-            })
         }
       })
     })
