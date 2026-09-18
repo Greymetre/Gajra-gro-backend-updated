@@ -144,13 +144,21 @@ export const PushNotification = async (
     token: deviceToken, // Fixed: use 'token' instead of 'deviceToken'
   };
 
+  // Customers who never granted notifications have no token saved.
+  if (!deviceToken || deviceToken === 'undefined' || deviceToken === 'null') {
+    return null;
+  }
+
+  // A notification is best-effort: callers run this after their DB work is
+  // done, so a push failure (bad token, missing APNs key for iOS, FCM outage)
+  // must not turn a successful request into an error for the app.
   try {
     const response = await admin.messaging().send(message);
     console.log('Notification sent successfully:', response);
     return response;
   } catch (error) {
     console.error('Error sending notification:', error);
-    throw error;
+    return null;
   }
 };
 
