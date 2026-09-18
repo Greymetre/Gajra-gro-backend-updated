@@ -39,6 +39,10 @@ export class Customer {
   @Prop({ type: String, required: true , index: true})
   contactPerson: string;
 
+  // Person who buys stock for the shop; optional, set from the mobile Profile.
+  @Prop({ type: String, default: '' })
+  buyerName: string;
+
   @Prop({ type: String,  default: '+91' })
   phoneCode: string;
 

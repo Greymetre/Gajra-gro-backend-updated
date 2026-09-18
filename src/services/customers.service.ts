@@ -1036,6 +1036,7 @@ export class CustomersService {
               _id: 1,
               firmName: { $ifNull: ["$firmName", ""] },
               contactPerson: { $ifNull: ["$contactPerson", ""] },
+              buyerName: { $ifNull: ["$buyerName", ""] },
               customerType: { $ifNull: ["$customerType", ""] },
               phoneCode: { $ifNull: ["$phoneCode", ""] },
               mobile: { $ifNull: ["$mobile", null] },
@@ -1377,6 +1378,10 @@ export class CustomersService {
       }
       existingCustomer.firmName = customerDetailsDto.firmName ?? existingCustomer.firmName;
       existingCustomer.contactPerson = customerDetailsDto.contactPerson ?? existingCustomer.contactPerson;
+      // Optional: an empty string clears it; not sending it keeps the old value.
+      if (customerDetailsDto.buyerName !== undefined) {
+        existingCustomer.buyerName = customerDetailsDto.buyerName;
+      }
       existingCustomer.mobile = customerDetailsDto.mobile ?? existingCustomer.mobile;
       existingCustomer.email = customerDetailsDto.email ?? existingCustomer.email;
       existingCustomer.customerType = customerDetailsDto.customerType ?? existingCustomer.customerType;

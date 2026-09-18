@@ -3,15 +3,17 @@ import { Transform } from 'class-transformer';
 import { IsString, IsNotEmpty, IsOptional, IsMongoId } from 'class-validator';
 import { Types, ObjectId } from "mongoose";
 
+// All fields are optional: the mobile Profile lets customers save partial bank
+// details. The IMPS screen still validates and sends all of them itself.
 export class BankInfoDTO {
     @ApiProperty()
     @IsString()
-    @IsNotEmpty()
+    @IsOptional()
     accountNo: string;
   
     @ApiProperty()
     @IsString()
-    @IsNotEmpty()
+    @IsOptional()
     holderName: string;
 
     @ApiProperty()
@@ -21,7 +23,7 @@ export class BankInfoDTO {
 
     @ApiProperty()
     @IsString()
-    @IsNotEmpty()
+    @IsOptional()
     bankName: string;
 
     @ApiProperty()

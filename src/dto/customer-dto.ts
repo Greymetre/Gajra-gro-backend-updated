@@ -186,6 +186,12 @@ export class CustomerPersonalDetailsDto extends CustomerKycInfoDTO {
     @IsString()
     @IsOptional()
     @Transform(({ value }) => value?.trim())
+    buyerName: string;
+
+    @ApiProperty()
+    @IsString()
+    @IsOptional()
+    @Transform(({ value }) => value?.trim())
     contactPerson: string;
 
     @ApiProperty()
