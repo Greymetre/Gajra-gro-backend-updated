@@ -65,6 +65,13 @@ export class CustomerDto {
     @Transform(({ value }) => value?.trim())
     contactPerson: string;
 
+    // Person who buys stock for the shop; optional, set from mobile sign up.
+    @ApiProperty()
+    @IsString()
+    @IsOptional()
+    @Transform(({ value }) => value?.trim())
+    buyerName: string;
+
     @ApiProperty()
     @IsString()
     @IsOptional()
