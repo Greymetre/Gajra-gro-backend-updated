@@ -196,6 +196,15 @@ export class CustomersController {
     return { data };
   }
 
+  @ApiOperation({ summary: 'Parent Customer DropDown List' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @Post('parentDropdown')
+  @HttpCode(200)
+  protected async getParentCustomersDropDown(): Promise<SuccessResponse<any>> {
+    const data = await this.customersService.getParentCustomersDropDown();
+    return { data };
+  }
+
   @ApiOperation({ summary: 'Customer DropDown List' })
   @ApiResponse({ status: 200, description: 'Success', type: GetCustomerInfoDto })
   @ApiBadRequestResponse({ description: 'Invalid id or password' })

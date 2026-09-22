@@ -141,6 +141,10 @@ export class Customer {
   @Prop([{ type: SchemaTypes.ObjectId, ref: 'Customer' , index: true}])
   parentid: Types.ObjectId;
 
+  // Parent name typed manually when it does not match an existing customer
+  @Prop({ type: String, trim: true })
+  parentName: string;
+
   @Prop({ type: [SurveyDataSchema], default: [] })
   surveyData: Array<SurveyData>;
 

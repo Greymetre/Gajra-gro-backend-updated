@@ -180,6 +180,20 @@ export class CustomerDto {
     @IsString()
     @IsOptional()
     remarkid: string;
+
+    // Existing parent customer id; empty string clears it
+    @ApiProperty({ required: false })
+    @IsOptional()
+    @IsString()
+    @Transform(({ value }) => value?.toString().trim())
+    parentid: any;
+
+    // Parent name typed manually when not present in the dropdown
+    @ApiProperty({ required: false })
+    @IsOptional()
+    @IsString()
+    @Transform(({ value }) => value?.toString().trim())
+    parentName: string;
 };
 
 export class CustomerPersonalDetailsDto extends CustomerKycInfoDTO {

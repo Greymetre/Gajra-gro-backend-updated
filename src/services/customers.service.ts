@@ -593,6 +593,7 @@ export class CustomersService {
     } else {
       delete createCustomerDto["password"];
     }
+    await this.resolveParentCustomer(createCustomerDto);
     const refno = await this.getNewRefNoCustomer()
     const customer = new this.customerModel({
       ...createCustomerDto,
@@ -1037,6 +1038,8 @@ export class CustomersService {
               firmName: { $ifNull: ["$firmName", ""] },
               contactPerson: { $ifNull: ["$contactPerson", ""] },
               buyerName: { $ifNull: ["$buyerName", ""] },
+              parentid: { $ifNull: [{ $arrayElemAt: ["$parentid", 0] }, ""] },
+              parentName: { $ifNull: ["$parentName", ""] },
               customerType: { $ifNull: ["$customerType", ""] },
               phoneCode: { $ifNull: ["$phoneCode", ""] },
               mobile: { $ifNull: ["$mobile", null] },
@@ -1164,6 +1167,7 @@ export class CustomersService {
       } else {
         delete updateCustomerDto["password"];
       }
+      await this.resolveParentCustomer(updateCustomerDto, id);
       return await this.customerModel.findByIdAndUpdate(id, updateCustomerDto, {
         new: true,
         useFindAndModify: false,
@@ -1763,6 +1767,79 @@ export class CustomersService {
       throw new BadRequestException("Customer Info Not Exist");
     }
   };
+
+  /**
+   * Normalises parent fields sent from the CRM form.
+   * - parentid (existing customer) wins and clears parentName.
+   * - A typed parentName is linked to an existing customer when the firm name matches,
+   *   otherwise it is stored as plain text.
+   * - Both empty clears the parent on update and is dropped on create.
+   */
+  private async resolveParentCustomer(dto: any, selfId?: string): Promise<void> {
+    const parentid = dto.parentid ? dto.parentid.toString().trim() : "";
+    const parentName = dto.parentName ? dto.parentName.toString().trim() : "";
+    if (dto.parentid === undefined && dto.parentName === undefined) return;
+
+    if (parentid) {
+      if (!ObjectId.isValid(parentid)) throw new BadRequestException("Invalid parent customer");
+      if (selfId && parentid === selfId.toString()) throw new BadRequestException("Customer cannot be its own parent");
+      const parent = await this.customerModel.findById(parentid).select("_id").exec();
+      if (!parent) throw new BadRequestException("Parent customer not found");
+      dto.parentid = [parent._id];
+      dto.parentName = "";
+      return;
+    }
+
+    if (parentName) {
+      const escaped = parentName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const match = await this.customerModel
+        .findOne({
+          firmName: { $regex: `^${escaped}$`, $options: "i" },
+          ...(selfId ? { _id: { $ne: ObjectId(selfId) } } : {}),
+        })
+        .select("_id")
+        .exec();
+      dto.parentid = match ? [match._id] : [];
+      dto.parentName = match ? "" : parentName;
+      return;
+    }
+
+    if (selfId) {
+      dto.parentid = [];
+      dto.parentName = "";
+    } else {
+      delete dto.parentid;
+      delete dto.parentName;
+    }
+  }
+
+  // Parent options: customers already linked as a parent + manually typed parent names
+  async getParentCustomersDropDown(): Promise<any> {
+    try {
+      const parentIds = await this.customerModel.distinct("parentid", { parentid: { $exists: true, $ne: [] } }).exec();
+      const parents = parentIds.length
+        ? await this.customerModel
+          .find({ _id: { $in: parentIds } })
+          .select("_id firmName contactPerson mobile")
+          .sort({ firmName: 1 })
+          .lean()
+          .exec()
+        : [];
+      const options: Array<any> = parents.map((p: any) => ({
+        value: p._id.toString(),
+        label: [p.firmName || p.contactPerson, p.mobile].filter(Boolean).join("_"),
+        parentName: "",
+      }));
+
+      const names: string[] = await this.customerModel.distinct("parentName", { parentName: { $nin: [null, ""] } }).exec();
+      names
+        .sort((a, b) => a.localeCompare(b))
+        .forEach((name) => options.push({ value: "", label: name, parentName: name }));
+      return options;
+    } catch (e) {
+      throw new InternalServerErrorException("error while getting parent customers " + e);
+    }
+  }
 
   async getCustomersDropDown(): Promise<any> {
     try {
