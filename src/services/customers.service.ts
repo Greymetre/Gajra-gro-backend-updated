@@ -833,6 +833,17 @@ export class CustomersService {
               as: "reportingInfo",
             },
           },
+          {
+            $lookup: {
+              from: "customers",
+              localField: "parentid",
+              foreignField: "_id",
+              pipeline: [
+                { $project: { _id: 1, firmName: 1, contactPerson: 1, mobile: 1 } },
+              ],
+              as: "parentInfo",
+            },
+          },
           { $unwind: { path: "$userInfo", preserveNullAndEmptyArrays: true }, },
           { $unwind: { path: "$reportingInfo", preserveNullAndEmptyArrays: true }, },
           {
@@ -855,6 +866,12 @@ export class CustomersService {
                 ]
               },
               customerType: { $ifNull: ["$customerType", ""] },
+              parentCustomer: {
+                $ifNull: [
+                  { $arrayElemAt: ["$parentInfo.firmName", 0] },
+                  { $ifNull: [{ $arrayElemAt: ["$parentInfo.contactPerson", 0] }, { $ifNull: ["$parentName", ""] }] },
+                ],
+              },
               remark: { $ifNull: ["$remarkInfos.remark", ""] },
               remarkid: { $ifNull: ["$remarkInfos.id", ""] },
               firmName: { $ifNull: ["$firmName", ""] },
@@ -1026,6 +1043,17 @@ export class CustomersService {
               as: "remarkInfos",
             },
           },
+          {
+            $lookup: {
+              from: "customers",
+              localField: "parentid",
+              foreignField: "_id",
+              pipeline: [
+                { $project: { _id: 1, firmName: 1, contactPerson: 1, mobile: 1 } },
+              ],
+              as: "parentInfo",
+            },
+          },
           { $unwind: { path: "$remarkInfos", preserveNullAndEmptyArrays: true }, },
           { $unwind: { path: "$createdInfo", preserveNullAndEmptyArrays: true }, },
           { $unwind: { path: "$userAssignInfo", preserveNullAndEmptyArrays: true }, },
@@ -1038,8 +1066,14 @@ export class CustomersService {
               firmName: { $ifNull: ["$firmName", ""] },
               contactPerson: { $ifNull: ["$contactPerson", ""] },
               buyerName: { $ifNull: ["$buyerName", ""] },
-              parentid: { $ifNull: [{ $arrayElemAt: ["$parentid", 0] }, ""] },
+              parentid: { $ifNull: [{ $arrayElemAt: ["$parentInfo._id", 0] }, ""] },
               parentName: { $ifNull: ["$parentName", ""] },
+              parentLabel: {
+                $ifNull: [
+                  { $arrayElemAt: ["$parentInfo.firmName", 0] },
+                  { $ifNull: [{ $arrayElemAt: ["$parentInfo.contactPerson", 0] }, ""] },
+                ],
+              },
               customerType: { $ifNull: ["$customerType", ""] },
               phoneCode: { $ifNull: ["$phoneCode", ""] },
               mobile: { $ifNull: ["$mobile", null] },
