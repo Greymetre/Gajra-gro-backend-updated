@@ -2379,10 +2379,20 @@ export class CustomersService {
       const authInfo = await getCustomerAuthInfo(req.headers);
       // console.log('AuthInfo:', authInfo);
       const dataArray = Array.isArray(createProductDto) ? createProductDto : Object.values(createProductDto);
+      // refno is handed out synchronously so parallel rows never get the same number
+      let nextRefNo = await this.getNewRefNoCustomer();
       const mappedArray = await Promise.all(dataArray.map(async (customer: any) => {
         let userAssign = {}
-        if (customer.email.trim() == "") {
-          delete customer.email; // Remove empty email 
+        // empty Excel cells arrive as undefined, and mobile often arrives as a number
+        customer.email = customer.email ? String(customer.email).trim() : "";
+        if (customer.email == "") {
+          delete customer.email; // Remove empty email
+        }
+        if (customer.mobile !== undefined && customer.mobile !== null) {
+          customer.mobile = String(customer.mobile).trim();
+        }
+        if (!customer.contactPerson || String(customer.contactPerson).trim() == "") {
+          customer.contactPerson = customer.firmName;
         }
 
         if (customer.assignUser) {
@@ -2411,13 +2421,14 @@ export class CustomersService {
           state: customer.state,
           country: customer.country,
         }
-        var existUser: CustomerViewInterface = {}
+        var existUser: CustomerViewInterface = null
         if (customer.mobile) {
           // console.log('Searching by mobile:', customer.mobile);
           existUser = await this.customerModel.findOne({ mobile: customer.mobile }).select('_id').exec()
           // console.log('Found by mobile:', existUser);
         }
-        if (customer.email && customer.email.trim() !== "") {
+        // fall back to email only when mobile did not match, so a mobile match is not lost
+        if (!existUser && customer.email) {
           existUser = await this.customerModel.findOne({ email: customer.email.trim() }).select('_id').exec();
         }
         const createdBy = await this.userModel.findOne({ _id: ObjectId(authInfo._id) }).select('_id').exec()
@@ -2548,9 +2559,11 @@ export class CustomersService {
               customer.createdBy = user.createdBy;
             }
           }
+          // customers imported earlier were saved without refno; give them one now
+          const refnoSet = user.refno ? {} : { refno: nextRefNo++ };
           return await this.customerModel.findOneAndUpdate({ _id: existUser._id },
             {
-              $set: { ...toInsertUser, "kycInfo.addharNo": addharNo, "kycInfo.panNo": panNo, remarkid: customer.remarkid, address: address, createdBy: customer.createdBy },
+              $set: { ...toInsertUser, ...refnoSet, "kycInfo.addharNo": addharNo, "kycInfo.panNo": panNo, remarkid: customer.remarkid, address: address, createdBy: customer.createdBy },
             },
             { new: true, setDefaultsOnInsert: false }
           )
@@ -2558,9 +2571,15 @@ export class CustomersService {
         }
         else {
           // console.log('Creating new customer:', customer.mobile || customer.email);
-          return await this.customerModel.create(toInsertUser, function (err, doc) {
-            return doc
-          })
+          if (!customer.firmName || !customer.mobile) {
+            return { error: "firmName and mobile are required", firmName: customer.firmName, mobile: customer.mobile };
+          }
+          try {
+            return await this.customerModel.create({ ...toInsertUser, refno: nextRefNo++ });
+          } catch (err) {
+            console.error('importCustomers create failed:', customer.mobile, err.message);
+            return { error: err.message, firmName: customer.firmName, mobile: customer.mobile };
+          }
         }
       })
       );
