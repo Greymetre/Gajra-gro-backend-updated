@@ -10,6 +10,7 @@ import { PaginationRequestDto } from 'src/dto/pagination-dto';
 import { CreateCallSummaryDTO, GetCallSummaryDto } from 'src/dto/callcenter-dto';
 const ObjectId = require('mongoose').Types.ObjectId;
 import axios from "axios";
+import { sfaRequestConfig, sfaUrl } from "src/common/utils/sfa-client";
 import { CustomerIdDTO } from 'src/dto/dashboard-dto';
 
 @Injectable()
@@ -173,7 +174,7 @@ export class CallCenterService {
   };
 
   public async bulkDataInsert(): Promise<any> {
-    await axios.get('https://gajragears.fieldkonnect.io/api/allNotesToMlp').then(async (response: any) => {
+    await axios.get(sfaUrl('allNotesToMlp'), sfaRequestConfig()).then(async (response: any) => {
       if (response?.data?.status === 'success') {
         const mappedArray = await Promise.all(response?.data?.data.map(async (notes: any, index: number) => {
           const customer = await this.customerModel.findOne({ mobile: notes.customerid }).select('_id').exec()

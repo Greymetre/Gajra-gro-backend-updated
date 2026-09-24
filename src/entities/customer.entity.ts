@@ -30,6 +30,10 @@ export class Customer {
   @Prop({ type: Number , index: true, unique: true, sparse: true})
   refno: number;
 
+  // Id of the same customer in Gajra Gears SFA ("GG SFA Customer ID")
+  @Prop({ type: Number, index: true, sparse: true })
+  sfaCustomerId: number;
+
   @Prop({ type: String, required: true , index: true})
   firmName: string;
 

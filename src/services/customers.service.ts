@@ -28,6 +28,8 @@ import { BankInfoDTO, UpiInfoDTO, UpiVerifiedDTO } from "src/dto/bank-info-dto";
 import { async } from "rxjs";
 import { SendOTPMessage } from "src/common/utils/send.message";
 import axios from "axios";
+import { normalizeMobile, sfaRequestConfig, sfaUrl } from "src/common/utils/sfa-client";
+import { syncCustomersFromSfa } from "src/common/utils/sfa-customer-sync";
 import { PaginationRequestDto } from "src/dto/pagination-dto";
 import { CustomerIdDTO } from "src/dto/dashboard-dto";
 import { CustomerViewInterface } from "src/interfaces/customer.interface";
@@ -1075,6 +1077,7 @@ export class CustomersService {
                 ],
               },
               customerType: { $ifNull: ["$customerType", ""] },
+              sfaCustomerId: { $ifNull: ["$sfaCustomerId", ""] },
               phoneCode: { $ifNull: ["$phoneCode", ""] },
               mobile: { $ifNull: ["$mobile", null] },
               email: { $ifNull: ["$email", ""] },
@@ -1601,47 +1604,19 @@ export class CustomersService {
     }
   };
 
-  // public async bulkCustomerInsert(createCustomerDto: CreateCustomerDto[]): Promise<any> {
+  // Same SFA customer sync as the cron (manual trigger)
   public async bulkCustomerInsert(): Promise<any> {
-    const saltOrRounds = 10;
-    await axios.get('https://gajragears.fieldkonnect.io/api/allCustomersToGajraMlp').then(async (response: any) => {
-      if (response?.data?.status === 'success') {
-        const mappedArray = await Promise.all(response?.data?.data.map(async (customer: any, index: number) => {
-          const existcustomer = await this.customerModel.findOne({ mobile: customer.mobile }).select('_id').exec()
-          const executive = await this.userModel.findOne({ mobile: customer.executive }).select('_id').exec()
-          if (existcustomer === null) {
-
-            const createdby = await this.userModel.findOne({ mobile: customer.createdby }).select('_id').exec()
-            customer.createdBy = createdby._id
-            customer.userAssign = { userid: executive._id }
-            customer.password = await bcrypt.hash(customer.password, saltOrRounds);
-            if (!customer.email) {
-              delete customer['email']
-            }
-            delete customer['executive']
-            delete customer['createdby']
-            const refno = await this.getNewRefNoCustomer()
-            await this.customerModel.create({ ...customer, refno: refno }, function (err, doc) {
-              return doc
-            })
-          }
-          // else {
-          //   await this.customerModel.findOneAndUpdate({ mobile: customer.mobile },
-          //     {
-          //       $set: {  userAssign: { userid: executive._id } },
-          //     },
-          //     { new: true, setDefaultsOnInsert: false }
-          //   )
-          //     .lean();
-          // }
-        })
-        );
-      }
-    })
-      .catch((error) => {
-        console.log('error', error);
-        throw new BadRequestException(error);
-      });
+    return syncCustomersFromSfa({
+      customerModel: this.customerModel,
+      userModel: this.userModel,
+      getNewRefNo: () => this.getNewRefNoCustomer(),
+      onCreated: async (doc) => {
+        const { points } = await this.welcomePointsSetting();
+        if (points.welcome && doc.customerType === "Mechanic") {
+          await this.welcomeTransactionsPoints(doc, points.welcome);
+        }
+      },
+    });
   };
 
   public async checkCustomerExist(email: string, mobile: any) {
@@ -1668,23 +1643,30 @@ export class CustomersService {
     }))
   };
 
+  // Sends the customer (with its _id) to SFA, which answers with the SFA customer id saved here as sfaCustomerId.
+  // A failure is only logged: the customer is already saved in Gajra Gro and the request must not fail.
   public async signupFromGajraMlp(data): Promise<any> {
     const customer = typeof data?.toObject === 'function' ? data.toObject() : { ...data };
     const coordinates = customer?.location?.coordinates || customer?.address?.coordinates;
-    const payload = Array.isArray(coordinates) && coordinates.length >= 2
-      ? {
-          ...customer,
-          latitude: Number(coordinates[1]),
-          longitude: Number(coordinates[0]),
-        }
-      : customer;
+    const payload = {
+      ...customer,
+      _id: customer?._id?.toString(),
+      mobile: normalizeMobile(customer?.mobile),
+      ...(Array.isArray(coordinates) && coordinates.length >= 2
+        ? { latitude: Number(coordinates[1]), longitude: Number(coordinates[0]) }
+        : {}),
+    };
 
-    await axios.post('https://gajragears.fieldkonnect.io/api/signupFromGajraMlp', payload).then(async (response: any) => {
-      return response
-    })
-      .catch((error) => {
-        throw new BadRequestException(error);
-      });
+    try {
+      const response = await axios.post(sfaUrl('signupFromGajraMlp'), payload, sfaRequestConfig());
+      const sfaCustomerId = Number(response?.data?.customer_id);
+      if (customer?._id && sfaCustomerId && customer.sfaCustomerId !== sfaCustomerId) {
+        await this.customerModel.updateOne({ _id: customer._id }, { $set: { sfaCustomerId } }).exec();
+      }
+      return response;
+    } catch (error) {
+      console.error('SFA signupFromGajraMlp failed for customer', customer?._id?.toString(), error?.response?.data || error?.message);
+    }
   };
 
   public async welcomeTransactionsPoints(data, points): Promise<any> {

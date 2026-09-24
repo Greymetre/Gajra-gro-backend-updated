@@ -194,6 +194,13 @@ export class CustomerDto {
     @IsString()
     @Transform(({ value }) => value?.toString().trim())
     parentName: string;
+
+    // Id of the customer in Gajra Gears SFA, sent when SFA signs the customer up
+    @ApiProperty({ required: false })
+    @IsOptional()
+    @IsNumber()
+    @Transform(({ value }) => (value === '' || value === null || value === undefined ? undefined : Number(value)))
+    sfaCustomerId: number;
 };
 
 export class CustomerPersonalDetailsDto extends CustomerKycInfoDTO {

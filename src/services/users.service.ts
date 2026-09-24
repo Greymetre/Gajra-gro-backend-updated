@@ -7,6 +7,7 @@ import { UserResponseDto } from '../user/users/dto/users.response.dto'
 import { StatusUserDto, CreateUserDto, UpdateUserDto } from '../user/users/dto/user.request.dto'
 const ObjectId = require('mongoose').Types.ObjectId;
 import axios from "axios";
+import { sfaRequestConfig, sfaUrl } from "src/common/utils/sfa-client";
 @Injectable()
 export class UsersService {
   constructor(@InjectModel(User.name) private userModel: Model<UserDocument>) {}
@@ -125,7 +126,7 @@ export class UsersService {
   async insertManyUsers(): Promise<any> {
     try {
       const saltOrRounds = 10;
-    await axios.get('https://gajragears.fieldkonnect.io/api/allUsersToGajraMlp').then(async (response: any) => {
+    await axios.get(sfaUrl('allUsersToGajraMlp'), sfaRequestConfig()).then(async (response: any) => {
       if (response.data.data) {
         const mappedArray = await Promise.all(response?.data?.data.map(async (customer: any) => {
           customer.password = await bcrypt.hash(customer.password.toString(), saltOrRounds);

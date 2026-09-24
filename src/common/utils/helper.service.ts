@@ -14,6 +14,8 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { v4 as uuid } from 'uuid';
 import axios from "axios";
+import { sfaRequestConfig, sfaUrl } from './sfa-client';
+import { syncCustomersFromSfa } from './sfa-customer-sync';
 import * as bcrypt from 'bcrypt';
 import * as path from 'path';
 import { getS3BucketName, getS3Client } from './s3-client';
@@ -312,7 +314,7 @@ export class CronHelper {
   async insertManyUsers(): Promise<any> {
     try {
       const saltOrRounds = 10;
-      await axios.get('https://gajragears.fieldkonnect.io/api/allUsersToGajraMlp').then(async (response: any) => {
+      await axios.get(sfaUrl('allUsersToGajraMlp'), sfaRequestConfig()).then(async (response: any) => {
         if (response.data.data) {
           const mappedArray = await Promise.all(response?.data?.data.map(async (customer: any) => {
             customer.password = await bcrypt.hash(customer.password.toString(), saltOrRounds);
@@ -372,48 +374,17 @@ export class CronHelper {
   };
 
   public async bulkCustomerInsert(): Promise<any> {
-    const saltOrRounds = 10;
-    await axios.get('https://gajragears.fieldkonnect.io/api/allCustomersToGajraMlp').then(async (response: any) => {
-      if (response?.data?.status === 'success') {
-
-        const mappedArray = await Promise.all(response?.data?.data.map(async (customer: any, index: number) => {
-          const existcustomer = await this.customerModel.findOne({ mobile: customer.mobile }).select('_id').exec()
-          const executive = await this.userModel.findOne({ mobile: customer.executive }).select('_id').exec()
-          if (existcustomer === null) {
-
-            const createdby = await this.userModel.findOne({ mobile: customer.createdby }).select('_id').exec()
-            customer.createdBy = createdby._id
-            customer.userAssign = { userid: executive._id }
-            customer.password = await bcrypt.hash(customer.password, saltOrRounds);
-            if (!customer.email) {
-              delete customer['email']
-            }
-            delete customer['executive']
-            delete customer['createdby']
-            const refno = await this.getNewRefNoCustomer()
-            try {
-              const doc = await this.customerModel.create({ ...customer, refno: refno });
-
-              const { points } = await this.welcomePointsSetting();
-
-              if (points.welcome && doc.customerType === "Mechanic") {
-                await this.welcomeTransactionsPoints(doc, points.welcome);
-              }
-
-              return doc;
-            } catch (err) {
-              console.error(err);
-              throw new Error("Error creating customer");
-            }
-          }
-
-        })
-        );
-      }
-    })
-      .catch((error) => {
-        console.log('error', error);
-      });
+    return syncCustomersFromSfa({
+      customerModel: this.customerModel,
+      userModel: this.userModel,
+      getNewRefNo: () => this.getNewRefNoCustomer(),
+      onCreated: async (doc) => {
+        const { points } = await this.welcomePointsSetting();
+        if (points.welcome && doc.customerType === "Mechanic") {
+          await this.welcomeTransactionsPoints(doc, points.welcome);
+        }
+      },
+    });
   };
 
   public async checkCashfreeOrderStatus() {
