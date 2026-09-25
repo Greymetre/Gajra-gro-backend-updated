@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsNotEmpty, IsNumber, IsArray, IsEmail, IsDefined, IsNotEmptyObject, IsObject, ValidateNested, IsMongoId, IsBoolean } from 'class-validator';
+import { IsOptional, IsString, IsNotEmpty, IsNumber, IsArray, IsEmail, IsDefined, IsNotEmptyObject, IsObject, ValidateNested, IsMongoId, IsBoolean, MaxLength } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { Types, ObjectId } from "mongoose";
 import {CustomerDto} from '../../../dto/customer-dto'
@@ -113,6 +113,13 @@ export class StatusCustomerDto {
     @IsOptional()
     @IsBoolean()
     active: boolean;
+
+    @ApiProperty()
+    @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+    @IsString()
+    @IsNotEmpty({ message: 'Remark is required' })
+    @MaxLength(500)
+    remark: string;
 }
 
 export class UserAssignToCustomerDto {

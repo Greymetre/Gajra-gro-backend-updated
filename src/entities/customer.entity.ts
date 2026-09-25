@@ -164,6 +164,16 @@ export class Customer {
   @Prop({ type: Boolean , default: true })
   active: Boolean;
 
+  // History of CRM active/inactive changes; each entry carries a mandatory remark.
+  @Prop({ type: [Object], default: [] })
+  statusRemarks: Array<{
+    active: boolean;
+    remark: string;
+    by?: Types.ObjectId;
+    byName?: string;
+    createdAt: Date;
+  }>;
+
   @Prop({ type: Object })
   verified: {
     emailVerified: { type: Boolean, default: false },

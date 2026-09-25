@@ -1122,6 +1122,20 @@ export class CustomersService {
               upiNumber: { $ifNull: ["$settingCustomerInfo.upiInfo.upiNumber", ""] },
               upiImage: { $ifNull: ["$kycInfo.upiImage", ""] },
               active: { $ifNull: ["$active", false] },
+              // Latest remark matching the current status (active -> last
+              // "active" remark, inactive -> last "inactive" remark).
+              statusRemark: {
+                $arrayElemAt: [
+                  {
+                    $filter: {
+                      input: { $ifNull: ["$statusRemarks", []] },
+                      as: "r",
+                      cond: { $eq: ["$$r.active", { $ifNull: ["$active", false] }] },
+                    },
+                  },
+                  -1,
+                ],
+              },
               createdAt: { $ifNull: ["$createdAt", ''] },
               loginAt: { $ifNull: ["$loginAt", ""] },
               createdBy: {
@@ -1228,11 +1242,22 @@ export class CustomersService {
     }
   };
 
-  async updateStatus(statusCustomerDto: StatusCustomerDto): Promise<Customer> {
+  async updateStatus(statusCustomerDto: StatusCustomerDto, authInfo: any = {}): Promise<Customer> {
     try {
       const customer = await this.customerModel.findByIdAndUpdate(
         statusCustomerDto.customerid,
-        { active: statusCustomerDto.active },
+        {
+          $set: { active: statusCustomerDto.active },
+          $push: {
+            statusRemarks: {
+              active: !!statusCustomerDto.active,
+              remark: statusCustomerDto.remark,
+              by: authInfo?._id ? ObjectId(authInfo._id) : undefined,
+              byName: [authInfo?.firstName, authInfo?.lastName].filter(Boolean).join(" "),
+              createdAt: new Date(),
+            },
+          },
+        },
         { new: true, useFindAndModify: false }
       );
       await this.pushStatusToSfa(customer);

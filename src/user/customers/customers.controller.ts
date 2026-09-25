@@ -129,8 +129,9 @@ export class CustomersController {
   }
 
   @Post('updateStatus')
-  protected async updateStatus(@Body() statusCustomerDto: StatusCustomerDto) {
-    return await this.customersService.updateStatus(statusCustomerDto);
+  protected async updateStatus(@Req() req: Request, @Body() statusCustomerDto: StatusCustomerDto) {
+    const authInfo = await getAuthUserInfo(req.headers);
+    return await this.customersService.updateStatus(statusCustomerDto, authInfo);
   }
   @Post('userAssign')
   protected async userAssign(@Body() userAssignDto: UserAssignToCustomerDto) {
