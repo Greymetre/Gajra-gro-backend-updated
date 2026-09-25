@@ -9,6 +9,7 @@ import { GetProductInfoDto } from '../user/products/dto/response-product.dto';
 import { Request } from 'express';
 import { getAuthUserInfo } from 'src/common/utils/jwt.helper';
 import { CategoryIdArrayDto, FilterPaginationProductDto } from 'src/dto/product-dto';
+import { productPriceRow, pushProductPricesToSfa } from 'src/common/utils/sfa-product-sync';
 const ObjectId = require('mongoose').Types.ObjectId;
 
 @Injectable()
@@ -22,6 +23,7 @@ export class ProductsService {
     const authInfo = await getAuthUserInfo(req.headers)
     const product = new this.productModel({ ...createProductDto, createdBy: authInfo._id });
     if (await product.save()) {
+      await pushProductPricesToSfa([productPriceRow(product)]);
       return new GetProductInfoDto(product)
     }
     throw new BadRequestException('Error in Create Product');
@@ -260,7 +262,9 @@ export class ProductsService {
 
   async updateProductInfo(id: string, updateProductDto: UpdateProductDto): Promise<Product> {
     try {
-      return await this.productModel.findByIdAndUpdate(id, updateProductDto, { new: true, useFindAndModify: false })
+      const product = await this.productModel.findByIdAndUpdate(id, updateProductDto, { new: true, useFindAndModify: false });
+      await pushProductPricesToSfa([productPriceRow(product)]);
+      return product;
     }
     catch (e) {
       throw new InternalServerErrorException('error while getting product details' + e,);
@@ -320,6 +324,8 @@ export class ProductsService {
         }
       })
       );
+      // Prices straight from the file: the creates above are not awaited, so the saved products can't be read back yet
+      await pushProductPricesToSfa(dataArray.map(productPriceRow));
       //   const response = await this.productModel.insertMany(mappedArray).then(async (result: any) => {
       //     return result;
       //   })

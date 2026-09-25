@@ -16,6 +16,8 @@ import { v4 as uuid } from 'uuid';
 import axios from "axios";
 import { sfaRequestConfig, sfaUrl } from './sfa-client';
 import { syncCustomersFromSfa } from './sfa-customer-sync';
+import { syncAllProductPricesToSfa } from './sfa-product-sync';
+import { Product, ProductDocument } from '../../entities/product.entity';
 import * as bcrypt from 'bcrypt';
 import * as path from 'path';
 import { getS3BucketName, getS3Client } from './s3-client';
@@ -176,6 +178,7 @@ export class CronHelper {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Transaction.name) private transactionModel: Model<TransactionDocument>,
     @InjectModel(SettingProject.name) private projectSettingModel: Model<SettingProjectDocument>,
+    @InjectModel(Product.name) private productModel: Model<ProductDocument>,
   ) { }
 
   async cronFunction() {
@@ -385,6 +388,10 @@ export class CronHelper {
         }
       },
     });
+  };
+
+  public async syncProductPricesToSfa(): Promise<any> {
+    return syncAllProductPricesToSfa(this.productModel);
   };
 
   public async checkCashfreeOrderStatus() {

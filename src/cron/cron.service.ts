@@ -32,6 +32,17 @@ export class CronService {
     }
   }
 
+  // Full product price sync to SFA once a day; every change is already pushed right away
+  @Cron('0 2 * * *')
+  async cronJobForSfaProductPrices() {
+    if (process.env.ENABLE_CRON_JOBS === 'false') return;
+    try {
+      console.log('SFA product price sync', await this.cronHelper.syncProductPricesToSfa());
+    } catch (error) {
+      console.error('Error in the cron job:', error);
+    }
+  }
+
   @Cron('* * * * *')
   async cronJobForGajraGro() {
     if (process.env.ENABLE_CRON_JOBS === 'false') return;

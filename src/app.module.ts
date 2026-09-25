@@ -16,6 +16,7 @@ import { CronService } from './cron/cron.service';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CronHelper } from './common/utils/helper.service';
 import { Redemption, RedemptionSchema } from './entities/redemption.entity';
+import { Product, ProductSchema } from './entities/product.entity';
 
 import { PackingList, PackingListSchema } from './entities/packing-list.entity';
 
@@ -43,6 +44,7 @@ import { PackingList, PackingListSchema } from './entities/packing-list.entity';
     MongooseModule.forFeature([{ name: SettingProject.name, schema: SettingProjectSchema }]),
     MongooseModule.forFeature([{ name: Transaction.name, schema: TransactionSchema }]),
     MongooseModule.forFeature([{ name: Redemption.name, schema: RedemptionSchema }]),
+    MongooseModule.forFeature([{ name: Product.name, schema: ProductSchema }]),
 
   ],
   controllers: [AppController],
