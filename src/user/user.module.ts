@@ -23,6 +23,7 @@ import { CategoryModule } from './category/category.module';
 import { SubcategoryModule } from './subcategory/subcategory.module';
 import { CountryModule } from './country/country.module';
 import { CityModule } from './city/city.module';
+import { DistrictModule } from './district/district.module';
 import { GiftModule } from './gift/gift.module';
 import { RedemptionModule } from './redemptions/redemption.module';
 import { SettingModule } from './setting/setting.module';
@@ -33,7 +34,7 @@ import { S3Module } from '../s3/s3.module';
 
 @Module({
   //imports: [MongooseModule.forRoot('mongodb://FieldKonnectUsr:BridgeIT2022@localhost:27017/FieldKonnectDb'), UsersModule, CustomersModule, AttendancesModule, ExpensesModule, ProductsModule, BeatsModule, BeatschedulesModule, CustomervisitModule, NotificationsModule, ActivitiesModule, ShoppingcartModule, OrdersModule, LoyaltyschemeModule, TransactionsModule, SalesModule, SurveyquestionsModule, StatesModule, CouponsModule, AuthModule, CategoryModule, SubcategoryModule, CountryModule, CityModule, AddressModule],
-  imports: [UsersModule, S3Module, CustomersModule, AttendancesModule, ExpensesModule, ProductsModule, BeatsModule, BeatschedulesModule, CustomervisitModule, NotificationsModule, ActivitiesModule, ShoppingcartModule, OrdersModule, LoyaltyschemeModule, TransactionsModule, SalesModule, SurveyquestionsModule, StatesModule, CouponsModule, AuthModule, CategoryModule, SubcategoryModule, CountryModule, CityModule, GiftModule, RedemptionModule, SettingModule, AddressModule, DashboardModule, CallCenterModule, PackingListModule],
+  imports: [UsersModule, S3Module, CustomersModule, AttendancesModule, ExpensesModule, ProductsModule, BeatsModule, BeatschedulesModule, CustomervisitModule, NotificationsModule, ActivitiesModule, ShoppingcartModule, OrdersModule, LoyaltyschemeModule, TransactionsModule, SalesModule, SurveyquestionsModule, StatesModule, CouponsModule, AuthModule, CategoryModule, SubcategoryModule, CountryModule, CityModule, DistrictModule, GiftModule, RedemptionModule, SettingModule, AddressModule, DashboardModule, CallCenterModule, PackingListModule],
   controllers: [],
   providers: [],
 })

@@ -22,6 +22,13 @@ export class State {
 
   @Prop({ type: Boolean , default: true })
   active: Boolean;
+
+  // GG SFA id (countries/states/cities.id); set by the SFA location sync
+  @Prop({ type: Number, index: true, unique: true, sparse: true })
+  sfaId: number;
+
+  @Prop({ type: Date })
+  updatedAt: Date;
 }
 
 export const StateSchema = SchemaFactory.createForClass(State);

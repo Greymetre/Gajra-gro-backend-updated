@@ -43,6 +43,28 @@ export class CronService {
     }
   }
 
+  // New / changed SFA countries, states, districts and cities every 5 minutes (first run after a restart is full)
+  @Cron('*/5 * * * *')
+  async cronJobForSfaLocations() {
+    if (process.env.ENABLE_CRON_JOBS === 'false') return;
+    try {
+      console.log('SFA location sync', JSON.stringify(await this.cronHelper.syncLocationsFromSfa()));
+    } catch (error) {
+      console.error('Error in the cron job:', error);
+    }
+  }
+
+  // Full location re-sync once a day, so renames also reach child records
+  @Cron('30 2 * * *')
+  async cronJobForSfaLocationsFull() {
+    if (process.env.ENABLE_CRON_JOBS === 'false') return;
+    try {
+      console.log('SFA location full sync', JSON.stringify(await this.cronHelper.syncLocationsFromSfa(true)));
+    } catch (error) {
+      console.error('Error in the cron job:', error);
+    }
+  }
+
   @Cron('* * * * *')
   async cronJobForGajraGro() {
     if (process.env.ENABLE_CRON_JOBS === 'false') return;

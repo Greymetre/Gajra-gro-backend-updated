@@ -17,6 +17,10 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { CronHelper } from './common/utils/helper.service';
 import { Redemption, RedemptionSchema } from './entities/redemption.entity';
 import { Product, ProductSchema } from './entities/product.entity';
+import { Country, CountrySchema } from './entities/country.entity';
+import { State, StateSchema } from './entities/state.entity';
+import { District, DistrictSchema } from './entities/district.entity';
+import { City, CitySchema } from './entities/city.entity';
 
 import { PackingList, PackingListSchema } from './entities/packing-list.entity';
 
@@ -45,6 +49,12 @@ import { PackingList, PackingListSchema } from './entities/packing-list.entity';
     MongooseModule.forFeature([{ name: Transaction.name, schema: TransactionSchema }]),
     MongooseModule.forFeature([{ name: Redemption.name, schema: RedemptionSchema }]),
     MongooseModule.forFeature([{ name: Product.name, schema: ProductSchema }]),
+    MongooseModule.forFeature([
+      { name: Country.name, schema: CountrySchema },
+      { name: State.name, schema: StateSchema },
+      { name: District.name, schema: DistrictSchema },
+      { name: City.name, schema: CitySchema },
+    ]),
 
   ],
   controllers: [AppController],

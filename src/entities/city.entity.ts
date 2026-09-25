@@ -17,6 +17,12 @@ export class City {
   @Prop({ type: String , index: true})
   country: string;
 
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'District', index: true })
+  districtid: Types.ObjectId;
+
+  @Prop({ type: String, index: true })
+  district: string;
+
   @Prop({ type: Date,default: new Date() })
   createdAt: Date;
 
@@ -25,6 +31,13 @@ export class City {
 
   @Prop({ type: Boolean , default: true })
   active: Boolean;
+
+  // GG SFA id (countries/states/cities.id); set by the SFA location sync
+  @Prop({ type: Number, index: true, unique: true, sparse: true })
+  sfaId: number;
+
+  @Prop({ type: Date })
+  updatedAt: Date;
 }
 
 export const CitySchema = SchemaFactory.createForClass(City);

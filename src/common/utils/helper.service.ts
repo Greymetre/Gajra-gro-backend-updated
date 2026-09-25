@@ -17,6 +17,11 @@ import axios from "axios";
 import { sfaRequestConfig, sfaUrl } from './sfa-client';
 import { syncCustomersFromSfa } from './sfa-customer-sync';
 import { syncAllProductPricesToSfa } from './sfa-product-sync';
+import { syncLocationsFromSfa } from './sfa-location-sync';
+import { Country, CountryDocument } from '../../entities/country.entity';
+import { State, StateDocument } from '../../entities/state.entity';
+import { District, DistrictDocument } from '../../entities/district.entity';
+import { City, CityDocument } from '../../entities/city.entity';
 import { Product, ProductDocument } from '../../entities/product.entity';
 import * as bcrypt from 'bcrypt';
 import * as path from 'path';
@@ -179,6 +184,10 @@ export class CronHelper {
     @InjectModel(Transaction.name) private transactionModel: Model<TransactionDocument>,
     @InjectModel(SettingProject.name) private projectSettingModel: Model<SettingProjectDocument>,
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
+    @InjectModel(Country.name) private countryModel: Model<CountryDocument>,
+    @InjectModel(State.name) private stateModel: Model<StateDocument>,
+    @InjectModel(District.name) private districtModel: Model<DistrictDocument>,
+    @InjectModel(City.name) private cityModel: Model<CityDocument>,
   ) { }
 
   async cronFunction() {
@@ -392,6 +401,16 @@ export class CronHelper {
 
   public async syncProductPricesToSfa(): Promise<any> {
     return syncAllProductPricesToSfa(this.productModel);
+  };
+
+  // Country / state / district / city masters from GG SFA; full = true re-syncs everything
+  public async syncLocationsFromSfa(full = false): Promise<any> {
+    return syncLocationsFromSfa({
+      countryModel: this.countryModel,
+      stateModel: this.stateModel,
+      districtModel: this.districtModel,
+      cityModel: this.cityModel,
+    }, full);
   };
 
   public async checkCashfreeOrderStatus() {
