@@ -19,7 +19,7 @@ const MAX_PAGES_PER_RUN = 10;
 let running = false;
 
 /**
- * Pulls the SFA Mechanic / Retailer customers that are not linked to Gajra Gro yet, creates the missing ones
+ * Pulls the active SFA Mechanic / Retailer customers that are not linked to Gajra Gro yet, creates the missing ones
  * (matched on sfaCustomerId or 10 digit mobile), stores their sfaCustomerId and posts each Gajra Gro _id back
  * to SFA, which removes them from the next pull. Also links the customers that already existed on both sides.
  */
@@ -81,8 +81,12 @@ async function upsertSfaCustomer(deps: SfaCustomerSyncDeps, row: any, result: { 
 
   const existing = await deps.customerModel
     .findOne({ $or: [{ sfaCustomerId }, { mobile }] })
-    .select('_id sfaCustomerId')
+    .select('_id sfaCustomerId active')
     .exec();
+  // An inactive Gajra Gro customer is not synced
+  if (existing?.active === false) {
+    return null;
+  }
   if (existing) {
     // Keep an existing link; a second SFA record with the same mobile is a duplicate in SFA
     if (!existing.sfaCustomerId) {

@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { CustomersService } from '../../services/customers.service';
 import { CustomersController } from './customers.controller';
+import { SfaSyncController } from './sfa-sync.controller';
 import { LoginMiddleware } from 'src/common/middleware/login.middleware';
 import { Customer, CustomerSchema } from '../../entities/customer.entity';
 import { SettingCustomer, SettingCustomerSchema } from '../../entities/setting.customer.entity';
@@ -21,7 +22,7 @@ import { MongooseModule } from '@nestjs/mongoose'
     { name: Remark.name, schema: RemarkSchema },
 
   ])],
-  controllers: [CustomersController],
+  controllers: [CustomersController, SfaSyncController],
   providers: [CustomersService]
 })
 export class CustomersModule {

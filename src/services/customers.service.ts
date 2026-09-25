@@ -1230,11 +1230,13 @@ export class CustomersService {
 
   async updateStatus(statusCustomerDto: StatusCustomerDto): Promise<Customer> {
     try {
-      return await this.customerModel.findByIdAndUpdate(
+      const customer = await this.customerModel.findByIdAndUpdate(
         statusCustomerDto.customerid,
         { active: statusCustomerDto.active },
         { new: true, useFindAndModify: false }
       );
+      await this.pushStatusToSfa(customer);
+      return customer;
     } catch (e) {
       throw new InternalServerErrorException(
         "error while getting customer details" + e
@@ -1647,6 +1649,10 @@ export class CustomersService {
   // A failure is only logged: the customer is already saved in Gajra Gro and the request must not fail.
   public async signupFromGajraMlp(data): Promise<any> {
     const customer = typeof data?.toObject === 'function' ? data.toObject() : { ...data };
+    // Inactive customers are not synced to SFA
+    if (customer?.active === false) {
+      return;
+    }
     const coordinates = customer?.location?.coordinates || customer?.address?.coordinates;
     const payload = {
       ...customer,
@@ -1667,6 +1673,63 @@ export class CustomersService {
     } catch (error) {
       console.error('SFA signupFromGajraMlp failed for customer', customer?._id?.toString(), error?.response?.data || error?.message);
     }
+  };
+
+  // Sends the customer's active / inactive status to SFA, so a customer switched off here is switched off there too.
+  // A failure is only logged: the status is already saved in Gajra Gro.
+  public async pushStatusToSfa(customer: any): Promise<void> {
+    if (!customer?._id || typeof customer.active !== 'boolean') {
+      return;
+    }
+    try {
+      await axios.post(sfaUrl('customerStatusFromGajraGro'), {
+        sfaCustomerId: customer.sfaCustomerId || '',
+        groCustomerId: customer._id.toString(),
+        mobile: normalizeMobile(customer.mobile),
+        active: customer.active,
+      }, sfaRequestConfig());
+    } catch (error) {
+      console.error('SFA status sync failed for customer', customer._id.toString(), error?.response?.data || error?.message);
+    }
+  };
+
+  // SFA posts { sfaCustomerId, groCustomerId, mobile, active } when a customer is switched active / inactive there.
+  // Saved straight on the customer, so it is not sent back to SFA.
+  public async customerStatusFromSfa(body: any): Promise<any> {
+    const active = body?.active === true || body?.active === 'true' || body?.active === 1 || body?.active === '1'
+      ? true
+      : body?.active === false || body?.active === 'false' || body?.active === 0 || body?.active === '0'
+        ? false
+        : null;
+    if (active === null) {
+      throw new BadRequestException('active must be true or false');
+    }
+
+    const or: any[] = [];
+    if (body?.groCustomerId && ObjectId.isValid(body.groCustomerId)) {
+      or.push({ _id: ObjectId(body.groCustomerId) });
+    }
+    if (Number(body?.sfaCustomerId)) {
+      or.push({ sfaCustomerId: Number(body.sfaCustomerId) });
+    }
+    const mobile = normalizeMobile(body?.mobile);
+    if (mobile.length === 10) {
+      or.push({ mobile });
+    }
+    if (!or.length) {
+      throw new BadRequestException('sfaCustomerId, groCustomerId or mobile is required');
+    }
+
+    // Prefer the linked ids over the mobile
+    const candidates = await this.customerModel.find({ $or: or }).select('_id sfaCustomerId mobile').exec();
+    const customer = candidates.find((c: any) => c._id.toString() === String(body?.groCustomerId))
+      || candidates.find((c: any) => Number(body?.sfaCustomerId) && c.sfaCustomerId === Number(body.sfaCustomerId))
+      || candidates[0];
+    if (!customer) {
+      return { updated: 0, message: 'Customer not found in Gajra Gro' };
+    }
+    await this.customerModel.updateOne({ _id: customer._id }, { $set: { active } }).exec();
+    return { updated: 1, customerid: customer._id.toString() };
   };
 
   public async welcomeTransactionsPoints(data, points): Promise<any> {
