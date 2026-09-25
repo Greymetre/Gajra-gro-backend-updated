@@ -36,6 +36,9 @@ export class CityService {
             pincode: { $ifNull: ["$pincode", []] },
             state: { $ifNull: ["$state", ""] },
             country: { $ifNull: ["$country", ""] },
+            district: { $ifNull: ["$district", ""] },
+            districtid: { $ifNull: ["$districtid", ""] },
+            sfaId: { $ifNull: ["$sfaId", null] },
             active: { $ifNull: ["$active", false] },
           },
         },
@@ -44,10 +47,11 @@ export class CityService {
             $or: [
               { cityName: { $regex: paginationDto.search, '$options': 'i' } },
               { state: { $regex: paginationDto.search, '$options': 'i' } },
+              { district: { $regex: paginationDto.search, '$options': 'i' } },
             ],
           },
         },
-        { $sort: { refno: -1 } },
+        { $sort: { state: 1, cityName: 1 } },
         {
           $facet: {
             paginate: [
@@ -81,6 +85,9 @@ export class CityService {
             pincode: { $ifNull: ["$pincode", []] },
             state: { $ifNull: ["$state", ""] },
             country: { $ifNull: ["$country", ""] },
+            district: { $ifNull: ["$district", ""] },
+            districtid: { $ifNull: ["$districtid", ""] },
+            sfaId: { $ifNull: ["$sfaId", null] },
             active: { $ifNull: ["$active", false] },
           },
         },

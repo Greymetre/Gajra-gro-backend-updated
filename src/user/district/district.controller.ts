@@ -25,6 +25,13 @@ export class DistrictController {
     return { data };
   };
 
+  @ApiOperation({ summary: 'Country / state / district / city counts (total and active)' })
+  @Get('counts')
+  protected async getLocationCounts(): Promise<SuccessResponse<any>> {
+    const data = await this.districtService.getLocationCounts();
+    return { data };
+  };
+
   @ApiOperation({ summary: 'Get district details' })
   @Get('/:id')
   protected async getDistrictInfo(@Param('id') id: string): Promise<SuccessResponse<any>> {

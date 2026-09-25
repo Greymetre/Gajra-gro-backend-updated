@@ -24,7 +24,7 @@ export class CountryService {
   };
 
   async getAllCountries(): Promise<any> {
-    const countries = await this.countryModel.find().select('countryName iso phoneCode currency timezones flag active').exec();
+    const countries = await this.countryModel.find().select('countryName iso phoneCode currency timezones flag active sfaId').exec();
     if(!countries)
     {
       throw new BadRequestException('Data Not Found');

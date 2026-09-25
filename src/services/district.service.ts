@@ -54,6 +54,24 @@ export class DistrictService {
     return data;
   };
 
+  // Totals for the Address Master cards: { countries: { total, active }, states, districts, cities }
+  async getLocationCounts(): Promise<any> {
+    const count = async (model: Model<any>) => {
+      const [total, active] = await Promise.all([
+        model.countDocuments({}).exec(),
+        model.countDocuments({ active: true }).exec(),
+      ]);
+      return { total, active };
+    };
+    const [countries, states, districts, cities] = await Promise.all([
+      count(this.countryModel),
+      count(this.stateModel),
+      count(this.districtModel),
+      count(this.cityModel),
+    ]);
+    return { countries, states, districts, cities };
+  };
+
   // Manual trigger for the SFA location sync (the cron runs it automatically)
   async syncFromSfa(full = true): Promise<any> {
     return syncLocationsFromSfa(

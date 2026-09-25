@@ -36,7 +36,7 @@ export class StatesService {
             as: "countryInfo",
           },
         },
-        { $unwind: "$countryInfo" },
+        { $unwind: { path: "$countryInfo", preserveNullAndEmptyArrays: true } },
         {
           $project: {
             _id: 1,
@@ -45,6 +45,7 @@ export class StatesService {
             countryid: { $ifNull: ["$countryid", ""] },
             countryName: { $ifNull: ["$countryInfo.countryName", ""] },
             active: { $ifNull: ["$active", false] },
+            sfaId: { $ifNull: ["$sfaId", null] },
           },
         },
       ]).exec()
