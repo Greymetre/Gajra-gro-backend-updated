@@ -91,7 +91,7 @@ function planUpsert(
   nameKey: string,
   set: Record<string, any>,
   insertOnly: Record<string, any> = {},
-) {
+): { previous: any; op: any } {
   const existing = idx.bySfaId.get(row.sfaId) || idx.byName.get(nameKey);
   const now = new Date();
   if (existing) {
