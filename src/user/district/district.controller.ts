@@ -1,10 +1,10 @@
-import { Controller, Get, Post, Body, Param, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, UseInterceptors } from '@nestjs/common';
 import { ApiInternalServerErrorResponse, ApiOperation } from '@nestjs/swagger';
 import { SuccessResponse } from '../../common/interfaces/response';
 import { DistrictService } from '../../services/district.service';
 import { TransformInterceptor } from 'src/common/dispatchers/transform.interceptor';
 
-// Districts are synced from GG SFA, so there is no create / update here
+// Districts are synced from GG SFA, so there is no create / update here (only delete)
 @Controller('user/district')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @UseInterceptors(TransformInterceptor)
@@ -15,6 +15,13 @@ export class DistrictController {
   @Post('all')
   protected async getAllDistricts(@Body() body: any): Promise<SuccessResponse<any>> {
     const data = await this.districtService.getAllDistricts(body);
+    return { data };
+  };
+
+  @ApiOperation({ summary: 'City pincodes, one row each ({ currentPage, recordPerPage, search })' })
+  @Post('pincodes')
+  protected async getAllPincodes(@Body() body: any): Promise<SuccessResponse<any>> {
+    const data = await this.districtService.getAllPincodes(body);
     return { data };
   };
 
@@ -30,6 +37,12 @@ export class DistrictController {
   protected async getLocationCounts(): Promise<SuccessResponse<any>> {
     const data = await this.districtService.getLocationCounts();
     return { data };
+  };
+
+  @ApiOperation({ summary: 'Delete a district (its cities are kept, only unlinked)' })
+  @Delete(':id')
+  protected async deleteDistrict(@Param('id') id: string) {
+    return await this.districtService.deleteDistrict(id);
   };
 
   @ApiOperation({ summary: 'Get district details' })

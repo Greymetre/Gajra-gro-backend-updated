@@ -54,6 +54,72 @@ export class DistrictService {
     return data;
   };
 
+  // One row per city pincode: { currentPage, recordPerPage, search }
+  async getAllPincodes(body: any = {}): Promise<any> {
+    const currentPage = Math.max(1, Number(body?.currentPage) || 1);
+    const recordPerPage = Math.min(500, Math.max(1, Number(body?.recordPerPage) || 100));
+    const search = String(body?.search || '').trim();
+    const pipeline: any[] = [
+      { $match: { 'pincode.0': { $exists: true } } },
+      {
+        $project: {
+          cityName: 1, district: 1, state: 1, country: 1, active: 1,
+          pincode: 1,
+          sfaPins: { $ifNull: ['$sfaPincodes.pincode', []] },
+        },
+      },
+      { $unwind: '$pincode' },
+    ];
+    if (search) {
+      const rx = { $regex: escapeRegex(search), $options: 'i' };
+      pipeline.push({ $match: { $or: [{ pincode: rx }, { cityName: rx }, { district: rx }, { state: rx }] } });
+    }
+    pipeline.push(
+      { $sort: { pincode: 1 } },
+      {
+        $facet: {
+          paginate: [{ $count: 'totalDocs' }],
+          docs: [
+            { $skip: (currentPage - 1) * recordPerPage },
+            { $limit: recordPerPage },
+            {
+              $project: {
+                _id: 0,
+                cityid: '$_id',
+                pincode: 1, cityName: 1, district: 1, state: 1, country: 1, active: 1,
+                fromSfa: { $in: ['$pincode', '$sfaPins'] },
+              },
+            },
+          ],
+        },
+      },
+    );
+    const [data] = await this.cityModel.aggregate(pipeline).exec();
+    const totalDocs = data?.paginate?.[0]?.totalDocs || 0;
+    return { docs: data?.docs || [], totalDocs, currentPage, recordPerPage, totalPages: Math.ceil(totalDocs / recordPerPage) };
+  };
+
+  // Deletes a district and unlinks it from its cities (the cities themselves stay)
+  async deleteDistrict(id: string): Promise<any> {
+    if (!ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid district id');
+    }
+    try {
+      const district = await this.districtModel.findByIdAndDelete(id).exec();
+      if (!district) {
+        throw new BadRequestException('District not found');
+      }
+      await this.cityModel.updateMany(
+        { districtid: ObjectId(id) },
+        { $unset: { districtid: '' }, $set: { district: '' } },
+      ).exec();
+      return district;
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
+      throw new InternalServerErrorException('error while deleting district' + e);
+    }
+  };
+
   // Totals for the Address Master cards: { countries: { total, active }, states, districts, cities }
   async getLocationCounts(): Promise<any> {
     const count = async (model: Model<any>) => {
@@ -63,13 +129,31 @@ export class DistrictService {
       ]);
       return { total, active };
     };
-    const [countries, states, districts, cities] = await Promise.all([
+    // Pincodes live as a list on each city; an inactive SFA pincode is not in that list
+    const countPincodes = async () => {
+      const [row] = await this.cityModel.aggregate([
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $size: { $ifNull: ['$pincode', []] } } },
+            active: {
+              $sum: {
+                $cond: [{ $eq: ['$active', true] }, { $size: { $ifNull: ['$pincode', []] } }, 0],
+              },
+            },
+          },
+        },
+      ]).exec();
+      return { total: row?.total || 0, active: row?.active || 0 };
+    };
+    const [countries, states, districts, cities, pincodes] = await Promise.all([
       count(this.countryModel),
       count(this.stateModel),
       count(this.districtModel),
       count(this.cityModel),
+      countPincodes(),
     ]);
-    return { countries, states, districts, cities };
+    return { countries, states, districts, cities, pincodes };
   };
 
   private get syncDeps() {
