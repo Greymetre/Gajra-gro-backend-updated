@@ -403,8 +403,8 @@ export class CronHelper {
     return syncAllProductPricesToSfa(this.productModel);
   };
 
-  // Country / state / district / city masters from GG SFA; full = true re-syncs everything
-  public async syncLocationsFromSfa(full = false): Promise<any> {
+  // Country / state / district / city / pincode masters from GG SFA; full = true re-syncs everything
+  public async syncLocationsFromSfa(full = true): Promise<any> {
     return syncLocationsFromSfa({
       countryModel: this.countryModel,
       stateModel: this.stateModel,

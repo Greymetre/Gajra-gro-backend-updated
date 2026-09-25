@@ -5,7 +5,7 @@ import { District, DistrictDocument } from '../entities/district.entity';
 import { Country, CountryDocument } from '../entities/country.entity';
 import { State, StateDocument } from '../entities/state.entity';
 import { City, CityDocument } from '../entities/city.entity';
-import { syncLocationsFromSfa } from '../common/utils/sfa-location-sync';
+import { applyLocationRows, LOCATION_TYPES, LocationType, syncLocationsFromSfa } from '../common/utils/sfa-location-sync';
 const ObjectId = require('mongoose').Types.ObjectId;
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -72,16 +72,28 @@ export class DistrictService {
     return { countries, states, districts, cities };
   };
 
-  // Manual trigger for the SFA location sync (the cron runs it automatically)
+  private get syncDeps() {
+    return {
+      countryModel: this.countryModel,
+      stateModel: this.stateModel,
+      districtModel: this.districtModel,
+      cityModel: this.cityModel,
+    };
+  }
+
+  // Manual trigger for the SFA location pull (the nightly cron runs it too)
   async syncFromSfa(full = true): Promise<any> {
-    return syncLocationsFromSfa(
-      {
-        countryModel: this.countryModel,
-        stateModel: this.stateModel,
-        districtModel: this.districtModel,
-        cityModel: this.cityModel,
-      },
-      full,
-    );
+    return syncLocationsFromSfa(this.syncDeps, full);
+  };
+
+  // One change pushed by SFA: { type, rows, deletedIds }
+  async applySfaPush(body: any): Promise<any> {
+    const type = body?.type as LocationType;
+    if (!LOCATION_TYPES.includes(type)) {
+      throw new BadRequestException('type must be countries, states, districts, cities or pincodes');
+    }
+    const rows = Array.isArray(body?.rows) ? body.rows : [];
+    const deletedIds = Array.isArray(body?.deletedIds) ? body.deletedIds : [];
+    return applyLocationRows(this.syncDeps, type, rows, deletedIds);
   };
 }

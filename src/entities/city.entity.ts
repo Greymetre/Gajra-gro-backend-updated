@@ -23,6 +23,10 @@ export class City {
   @Prop({ type: String, index: true })
   district: string;
 
+  // Pincodes that came from GG SFA (their text is also in `pincode`); pincodes added in Gajra Gro are not listed here
+  @Prop({ type: [Object], default: [] })
+  sfaPincodes: Array<{ sfaId: number; pincode: string; active: boolean }>;
+
   @Prop({ type: Date,default: new Date() })
   createdAt: Date;
 

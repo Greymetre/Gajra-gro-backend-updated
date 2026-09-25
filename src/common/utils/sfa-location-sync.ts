@@ -13,13 +13,13 @@ export interface SfaLocationSyncDeps {
   cityModel: Model<CityDocument>;
 }
 
-type LocationType = 'countries' | 'states' | 'districts' | 'cities';
+export type LocationType = 'countries' | 'states' | 'districts' | 'cities' | 'pincodes';
+export const LOCATION_TYPES: LocationType[] = ['countries', 'states', 'districts', 'cities', 'pincodes'];
 
 const PAGE_SIZE = 1000;
 const WRITE_BATCH = 500;
 
-// SFA server time of the last successful run; the next run only pulls rows changed since then.
-// Kept in memory, so after a restart the first run is a full sync.
+// SFA server time of the last successful pull; { full: false } only pulls rows changed since then
 let lastServerTime: string | null = null;
 let running = false;
 
@@ -63,33 +63,6 @@ async function writeOps(model: Model<any>, ops: any[], label: string) {
   return failed;
 }
 
-/**
- * Builds the insert / update for one SFA row. The Gajra Gro record is matched on sfaId first, then on
- * its name (and parent), so records that already exist in Gajra Gro are updated and linked, not duplicated.
- */
-function planUpsert(
-  row: any,
-  bySfaId: Map<number, any>,
-  byName: Map<string, any>,
-  nameKey: string,
-  set: Record<string, any>,
-  insertOnly: Record<string, any> = {},
-) {
-  const existing = bySfaId.get(row.sfaId) || byName.get(nameKey);
-  const now = new Date();
-  if (existing) {
-    const doc = { ...existing, ...set, sfaId: row.sfaId };
-    bySfaId.set(row.sfaId, doc);
-    byName.set(nameKey, doc);
-    return { updateOne: { filter: { _id: existing._id }, update: { $set: { ...set, sfaId: row.sfaId, updatedAt: now } } } };
-  }
-  const _id = new Types.ObjectId();
-  const doc = { _id, ...set, sfaId: row.sfaId };
-  bySfaId.set(row.sfaId, doc);
-  byName.set(nameKey, doc);
-  return { insertOne: { document: { _id, ...insertOnly, ...set, sfaId: row.sfaId, createdAt: now, updatedAt: now } } };
-}
-
 async function loadIndex(model: Model<any>, fields: string, nameKeyOf: (doc: any) => string) {
   const docs = await model.find({}).select(fields).lean().exec();
   const bySfaId = new Map<number, any>();
@@ -108,11 +81,258 @@ async function loadIndex(model: Model<any>, fields: string, nameKeyOf: (doc: any
 }
 
 /**
- * Pulls countries, states, districts and cities from GG SFA and upserts them into Gajra Gro.
- * Only the location masters are written; customer records (their city / state / country text) are never touched.
- * full = true ignores the last run time and re-syncs everything.
+ * Builds the insert / update for one SFA row. The Gajra Gro record is matched on sfaId first, then on
+ * its name (and parent), so records that already exist in Gajra Gro are updated and linked, not duplicated.
+ * Returns the previous copy too, so renames can be passed on to child records.
  */
-export async function syncLocationsFromSfa(deps: SfaLocationSyncDeps, full = false) {
+function planUpsert(
+  row: any,
+  idx: { bySfaId: Map<number, any>; byName: Map<string, any> },
+  nameKey: string,
+  set: Record<string, any>,
+  insertOnly: Record<string, any> = {},
+) {
+  const existing = idx.bySfaId.get(row.sfaId) || idx.byName.get(nameKey);
+  const now = new Date();
+  if (existing) {
+    const doc = { ...existing, ...set, sfaId: row.sfaId };
+    idx.bySfaId.set(row.sfaId, doc);
+    idx.byName.set(nameKey, doc);
+    return {
+      previous: existing,
+      op: { updateOne: { filter: { _id: existing._id }, update: { $set: { ...set, sfaId: row.sfaId, updatedAt: now } } } },
+    };
+  }
+  const _id = new Types.ObjectId();
+  const doc = { _id, ...set, sfaId: row.sfaId };
+  idx.bySfaId.set(row.sfaId, doc);
+  idx.byName.set(nameKey, doc);
+  return {
+    previous: null,
+    op: { insertOne: { document: { _id, ...insertOnly, ...set, sfaId: row.sfaId, createdAt: now, updatedAt: now } } },
+  };
+}
+
+// SFA deletes rows for real, so a deleted row is switched off here (customers keep their text values)
+async function deactivateBySfaId(model: Model<any>, sfaIds: number[]) {
+  if (!sfaIds.length) return 0;
+  const res: any = await model.updateMany({ sfaId: { $in: sfaIds } }, { $set: { active: false, updatedAt: new Date() } }).exec();
+  return res?.modifiedCount ?? res?.nModified ?? 0;
+}
+
+/**
+ * Upserts one type of SFA rows (from the pull or from an SFA push) into Gajra Gro.
+ * Only the location masters are written; customer records are never touched.
+ * fullSnapshot = the rows are every SFA row of that type (full pull): for pincodes, SFA pincodes that are no
+ * longer sent are removed from their city.
+ */
+export function applyLocationRows(
+  deps: SfaLocationSyncDeps,
+  type: LocationType,
+  rows: any[],
+  deletedIds: number[] = [],
+  fullSnapshot = false,
+) {
+  return serialize(() => applyLocationRowsNow(deps, type, rows, deletedIds, fullSnapshot));
+}
+
+// SFA pushes and the pull can arrive together; run one apply at a time (pincodes are read-modify-write)
+let applyChain: Promise<any> = Promise.resolve();
+function serialize<T>(fn: () => Promise<T>): Promise<T> {
+  const next = applyChain.then(fn, fn);
+  applyChain = next.catch(() => undefined);
+  return next;
+}
+
+async function applyLocationRowsNow(
+  deps: SfaLocationSyncDeps,
+  type: LocationType,
+  rows: any[],
+  deletedIds: number[],
+  fullSnapshot: boolean,
+) {
+  rows = (rows || []).filter((r) => r && r.sfaId && String(r.name ?? '').trim());
+  deletedIds = (deletedIds || []).map(Number).filter(Boolean);
+  const result = { received: rows.length, deleted: deletedIds.length, failed: 0 };
+
+  if (type === 'countries') {
+    const idx = await loadIndex(deps.countryModel, '_id countryName sfaId', (d) => key(d.countryName));
+    const plans = rows.map((r) => planUpsert(r, idx, key(r.name), { countryName: r.name, active: r.active }));
+    result.failed = await writeOps(deps.countryModel, plans.map((p) => p.op), 'country');
+    // Country renamed in SFA: districts / cities keep the country as text
+    for (const p of plans) {
+      const oldName = p.previous?.countryName;
+      const newName = p.op.updateOne?.update.$set.countryName;
+      if (oldName && newName && oldName !== newName) {
+        await deps.districtModel.updateMany({ country: oldName, sfaId: { $exists: true } }, { $set: { country: newName } }).exec();
+        await deps.cityModel.updateMany({ country: oldName, sfaId: { $exists: true } }, { $set: { country: newName } }).exec();
+      }
+    }
+    await deactivateBySfaId(deps.countryModel, deletedIds);
+    return result;
+  }
+
+  if (type === 'states') {
+    const countryIdx = await loadIndex(deps.countryModel, '_id countryName sfaId', (d) => key(d.countryName));
+    // stateName is unique in Gajra Gro, so matched on sfaId, else stateName
+    const idx = await loadIndex(deps.stateModel, '_id stateName countryid sfaId', (d) => key(d.stateName));
+    const plans = rows.map((r) => {
+      const country = countryIdx.bySfaId.get(Number(r.countryId)) || countryIdx.byName.get(key(r.countryName));
+      return planUpsert(r, idx, key(r.name), {
+        stateName: r.name,
+        active: r.active,
+        ...(country ? { countryid: country._id } : {}),
+      });
+    });
+    result.failed = await writeOps(deps.stateModel, plans.map((p) => p.op), 'state');
+    // State renamed in SFA: pass the new name to its districts and their cities
+    for (const p of plans) {
+      const oldName = p.previous?.stateName;
+      const newName = p.op.updateOne?.update.$set.stateName;
+      if (oldName && newName && oldName !== newName) {
+        const districtIds = await deps.districtModel.find({ stateid: p.previous._id }).distinct('_id').exec();
+        await deps.districtModel.updateMany({ stateid: p.previous._id }, { $set: { state: newName } }).exec();
+        await deps.cityModel.updateMany({ districtid: { $in: districtIds } }, { $set: { state: newName } }).exec();
+      }
+    }
+    await deactivateBySfaId(deps.stateModel, deletedIds);
+    return result;
+  }
+
+  if (type === 'districts') {
+    const stateIdx = await loadIndex(deps.stateModel, '_id stateName sfaId', (d) => key(d.stateName));
+    const idx = await loadIndex(deps.districtModel, '_id districtName state sfaId', (d) => `${key(d.districtName)}|${key(d.state)}`);
+    const plans = rows.map((r) => {
+      const state = stateIdx.bySfaId.get(Number(r.stateId)) || stateIdx.byName.get(key(r.stateName));
+      const stateName = state?.stateName || r.stateName || '';
+      return planUpsert(r, idx, `${key(r.name)}|${key(stateName)}`, {
+        districtName: r.name,
+        state: stateName,
+        country: r.countryName || '',
+        active: r.active,
+        ...(state ? { stateid: state._id } : {}),
+      });
+    });
+    result.failed = await writeOps(deps.districtModel, plans.map((p) => p.op), 'district');
+    // District renamed in SFA: pass the new name to its cities
+    for (const p of plans) {
+      const oldName = p.previous?.districtName;
+      const newName = p.op.updateOne?.update.$set.districtName;
+      if (oldName && newName && oldName !== newName) {
+        await deps.cityModel.updateMany({ districtid: p.previous._id }, { $set: { district: newName } }).exec();
+      }
+    }
+    await deactivateBySfaId(deps.districtModel, deletedIds);
+    return result;
+  }
+
+  if (type === 'cities') {
+    const stateIdx = await loadIndex(deps.stateModel, '_id stateName sfaId', (d) => key(d.stateName));
+    const districtIdx = await loadIndex(deps.districtModel, '_id districtName sfaId', () => '');
+    // Matched on sfaId, else cityName + state. Existing pincodes are left as they are.
+    const idx = await loadIndex(deps.cityModel, '_id cityName state sfaId', (d) => `${key(d.cityName)}|${key(d.state)}`);
+    const ops = rows.map((r) => {
+      const state = stateIdx.bySfaId.get(Number(r.stateId)) || stateIdx.byName.get(key(r.stateName));
+      const district = districtIdx.bySfaId.get(Number(r.districtId));
+      const stateName = state?.stateName || r.stateName || '';
+      return planUpsert(
+        r,
+        idx,
+        `${key(r.name)}|${key(stateName)}`,
+        {
+          cityName: r.name,
+          state: stateName,
+          country: r.countryName || '',
+          district: district?.districtName || r.districtName || '',
+          active: r.active,
+          ...(district ? { districtid: district._id } : {}),
+        },
+        { pincode: [], sfaPincodes: [] },
+      ).op;
+    });
+    result.failed = await writeOps(deps.cityModel, ops, 'city');
+    await deactivateBySfaId(deps.cityModel, deletedIds);
+    return result;
+  }
+
+  if (type === 'pincodes') {
+    result.failed = await applyPincodes(deps, rows, deletedIds, fullSnapshot);
+    return result;
+  }
+
+  throw new Error(`Unknown location type ${type}`);
+}
+
+/**
+ * Gajra Gro keeps pincodes as a string list on each city (city.pincode, used by the app and CRM).
+ * city.sfaPincodes remembers which of them came from SFA ({ sfaId, pincode, active }), so an SFA pincode
+ * that is edited, moved to another city, switched off or deleted is updated there, while pincodes added
+ * in Gajra Gro itself are kept.
+ */
+async function applyPincodes(deps: SfaLocationSyncDeps, rows: any[], deletedIds: number[], fullSnapshot: boolean) {
+  const cities = await deps.cityModel.find({}).select('_id sfaId pincode sfaPincodes').lean().exec();
+  const bySfaCity = new Map<number, any>();
+  const pinOwner = new Map<number, any>();
+  const originalSfaPins = new Map<string, Set<string>>();
+  for (const city of cities as any[]) {
+    city.sfaPincodes = Array.isArray(city.sfaPincodes) ? city.sfaPincodes : [];
+    originalSfaPins.set(String(city._id), new Set(city.sfaPincodes.map((p: any) => String(p.pincode))));
+    if (city.sfaId) bySfaCity.set(Number(city.sfaId), city);
+    for (const p of city.sfaPincodes) pinOwner.set(Number(p.sfaId), city);
+  }
+
+  const dirty = new Set<any>();
+  const removePin = (sfaId: number) => {
+    const owner = pinOwner.get(sfaId);
+    if (owner) {
+      owner.sfaPincodes = owner.sfaPincodes.filter((p: any) => Number(p.sfaId) !== sfaId);
+      pinOwner.delete(sfaId);
+      dirty.add(owner);
+    }
+  };
+
+  let failed = 0;
+  const received = new Set<number>();
+  for (const r of rows) {
+    const sfaId = Number(r.sfaId);
+    received.add(sfaId);
+    const target = bySfaCity.get(Number(r.cityId));
+    removePin(sfaId);
+    if (!target) {
+      // The city is not in Gajra Gro yet; the next city sync / nightly full sync adds it
+      failed++;
+      continue;
+    }
+    target.sfaPincodes.push({ sfaId, pincode: String(r.name).trim(), active: !!r.active });
+    pinOwner.set(sfaId, target);
+    dirty.add(target);
+  }
+  for (const sfaId of deletedIds) {
+    removePin(sfaId);
+  }
+  if (fullSnapshot) {
+    for (const sfaId of Array.from(pinOwner.keys())) {
+      if (!received.has(sfaId)) removePin(sfaId);
+    }
+  }
+
+  const ops = Array.from(dirty).map((city: any) => {
+    const wasSfa = originalSfaPins.get(String(city._id)) || new Set<string>();
+    const own = (Array.isArray(city.pincode) ? city.pincode : []).map(String).filter((p: string) => !wasSfa.has(p));
+    const fromSfa = city.sfaPincodes.filter((p: any) => p.active).map((p: any) => p.pincode);
+    const pincode = Array.from(new Set([...own, ...fromSfa]));
+    return { updateOne: { filter: { _id: city._id }, update: { $set: { pincode, sfaPincodes: city.sfaPincodes, updatedAt: new Date() } } } };
+  });
+  failed += await writeOps(deps.cityModel, ops, 'pincode');
+  return failed;
+}
+
+/**
+ * Pulls countries, states, districts, cities and pincodes from GG SFA (nightly full sync and the CRM
+ * "Sync from GG SFA" button). Day to day changes arrive right away through the SFA push (sfa-sync/locations).
+ * full = false only pulls rows changed since the last pull.
+ */
+export async function syncLocationsFromSfa(deps: SfaLocationSyncDeps, full = true) {
   if (running) {
     return { skipped: true };
   }
@@ -121,84 +341,11 @@ export async function syncLocationsFromSfa(deps: SfaLocationSyncDeps, full = fal
   const result: Record<string, any> = { mode: updatedAfter ? 'incremental' : 'full' };
   try {
     let serverTime: string | null = null;
-
-    // Countries: matched on sfaId, else countryName
-    const countries = await fetchAll('countries', updatedAfter);
-    serverTime = countries.serverTime;
-    const countryIdx = await loadIndex(deps.countryModel, '_id countryName sfaId', (d) => key(d.countryName));
-    const countryOps = countries.rows
-      .filter((r) => r.name)
-      .map((r) => planUpsert(r, countryIdx.bySfaId, countryIdx.byName, key(r.name), { countryName: r.name, active: r.active }));
-    result.countries = { received: countries.rows.length, failed: await writeOps(deps.countryModel, countryOps, 'country') };
-
-    const countryOf = (sfaCountryId: any, countryName: any) =>
-      countryIdx.bySfaId.get(Number(sfaCountryId)) || countryIdx.byName.get(key(countryName));
-
-    // States: stateName is unique in Gajra Gro, so matched on sfaId, else stateName
-    const states = await fetchAll('states', updatedAfter);
-    const stateIdx = await loadIndex(deps.stateModel, '_id stateName countryid sfaId', (d) => key(d.stateName));
-    const stateOps = states.rows
-      .filter((r) => r.name)
-      .map((r) => {
-        const country = countryOf(r.countryId, r.countryName);
-        return planUpsert(r, stateIdx.bySfaId, stateIdx.byName, key(r.name), {
-          stateName: r.name,
-          active: r.active,
-          ...(country ? { countryid: country._id } : {}),
-        });
-      });
-    result.states = { received: states.rows.length, failed: await writeOps(deps.stateModel, stateOps, 'state') };
-
-    const stateOf = (sfaStateId: any, stateName: any) =>
-      stateIdx.bySfaId.get(Number(sfaStateId)) || stateIdx.byName.get(key(stateName));
-
-    // Districts: matched on sfaId, else districtName + state
-    const districts = await fetchAll('districts', updatedAfter);
-    const districtIdx = await loadIndex(deps.districtModel, '_id districtName state sfaId', (d) => `${key(d.districtName)}|${key(d.state)}`);
-    const districtOps = districts.rows
-      .filter((r) => r.name)
-      .map((r) => {
-        const state = stateOf(r.stateId, r.stateName);
-        const stateName = state?.stateName || r.stateName || '';
-        return planUpsert(r, districtIdx.bySfaId, districtIdx.byName, `${key(r.name)}|${key(stateName)}`, {
-          districtName: r.name,
-          state: stateName,
-          country: r.countryName || '',
-          active: r.active,
-          ...(state ? { stateid: state._id } : {}),
-        });
-      });
-    result.districts = { received: districts.rows.length, failed: await writeOps(deps.districtModel, districtOps, 'district') };
-
-    const districtOf = (sfaDistrictId: any) => districtIdx.bySfaId.get(Number(sfaDistrictId));
-
-    // Cities: matched on sfaId, else cityName + state. Existing pincodes are left as they are.
-    const cities = await fetchAll('cities', updatedAfter);
-    const cityIdx = await loadIndex(deps.cityModel, '_id cityName state sfaId', (d) => `${key(d.cityName)}|${key(d.state)}`);
-    const cityOps = cities.rows
-      .filter((r) => r.name)
-      .map((r) => {
-        const state = stateOf(r.stateId, r.stateName);
-        const district = districtOf(r.districtId);
-        const stateName = state?.stateName || r.stateName || '';
-        return planUpsert(
-          r,
-          cityIdx.bySfaId,
-          cityIdx.byName,
-          `${key(r.name)}|${key(stateName)}`,
-          {
-            cityName: r.name,
-            state: stateName,
-            country: r.countryName || '',
-            district: district?.districtName || r.districtName || '',
-            active: r.active,
-            ...(district ? { districtid: district._id } : {}),
-          },
-          { pincode: [] },
-        );
-      });
-    result.cities = { received: cities.rows.length, failed: await writeOps(deps.cityModel, cityOps, 'city') };
-
+    for (const type of LOCATION_TYPES) {
+      const pulled = await fetchAll(type, updatedAfter);
+      serverTime = serverTime || pulled.serverTime;
+      result[type] = await applyLocationRows(deps, type, pulled.rows, [], !updatedAfter);
+    }
     // Only move the cursor forward once every type went through
     if (serverTime) {
       lastServerTime = serverTime;
