@@ -2269,6 +2269,37 @@ export class CustomersService {
     }
     const settingSet: any = {};
     if (hasDocNo && settingNoPath) settingSet[settingNoPath] = docNo;
+
+    // Extra details edited in the viewer, whitelisted per document.
+    const detailPaths: Record<string, { customer?: string; setting?: string }> = {
+      contactPerson: { customer: 'contactPerson' },
+      firmName: { customer: 'firmName' },
+      holderName: { setting: 'bankInfo.holderName' },
+      bankName: { setting: 'bankInfo.bankName' },
+      ifsc: { setting: 'bankInfo.ifsc' },
+    };
+    const allowedDetails: string[] = {
+      'verified.gstinVerified': ['firmName'],
+      'verified.panVerified': ['contactPerson', 'firmName'],
+      'verified.aadharVerified': ['contactPerson'],
+      'verified.otherVerified': ['contactPerson'],
+      'verified.bankVerified': ['holderName', 'bankName', 'ifsc', 'contactPerson'],
+      'verified.upiVerified': ['contactPerson'],
+    }[kycVerifiedDTO.verifiedTo] || [];
+    const details = isVerified && kycVerifiedDTO.details ? kycVerifiedDTO.details : {};
+    for (const key of allowedDetails) {
+      const value = details[key];
+      if (typeof value !== 'string') continue;
+      const trimmed = value.trim();
+      // Name fields must not be blanked; other details may be cleared.
+      if (!trimmed && (key === 'contactPerson' || key === 'firmName')) continue;
+      const path = detailPaths[key];
+      const finalValue = key === 'ifsc' ? trimmed.toUpperCase() : trimmed;
+      if (key === 'ifsc' && finalValue && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(finalValue))
+        throw new BadRequestException("Invalid IFSC code");
+      if (path.customer) customerSet[path.customer] = finalValue;
+      if (path.setting) settingSet[path.setting] = finalValue;
+    }
     if (kycVerifiedDTO.verifiedTo == 'verified.upiVerified') settingSet['upiInfo.verified'] = isVerified;
 
     try {

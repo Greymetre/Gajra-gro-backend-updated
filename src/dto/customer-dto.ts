@@ -365,6 +365,14 @@ export class KycVerifiedDTO {
     @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
     docNo?: string;
 
+    // Other details typed/corrected in the admin viewer (e.g. holderName,
+    // bankName, ifsc, contactPerson, firmName). Only keys allowed for the
+    // document being verified are saved.
+    @ApiProperty({ required: false })
+    @IsOptional()
+    @IsObject()
+    details?: Record<string, string>;
+
     // false un-verifies the document. Defaults to true.
     @ApiProperty({ required: false })
     @IsOptional()
