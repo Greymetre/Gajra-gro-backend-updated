@@ -1409,8 +1409,13 @@ export class CustomersService {
       if (!customerToUpdate) {
         throw new NotFoundException();
       }
-      if (customerKycDto.aadharBackImage || customerKycDto.aadharFrontImage) {
-        customerToUpdate.set({ "verified.aadharVerified": false, "kycInfo.aadharFrontImage": customerKycDto.aadharFrontImage, "kycInfo.aadharBackImage": customerKycDto.aadharBackImage });
+      // Only a newly uploaded image replaces (and un-verifies) a document; a
+      // side that wasn't re-uploaded keeps its stored image.
+      if (customerKycDto.aadharFrontImage) {
+        customerToUpdate.set({ "verified.aadharVerified": false, "kycInfo.aadharFrontImage": customerKycDto.aadharFrontImage });
+      }
+      if (customerKycDto.aadharBackImage) {
+        customerToUpdate.set({ "verified.aadharVerified": false, "kycInfo.aadharBackImage": customerKycDto.aadharBackImage });
       }
       if (customerKycDto.gstinImage) {
         customerToUpdate.set({ "verified.gstinVerified": false, "kycInfo.gstinImage": customerKycDto.gstinImage });
@@ -1418,8 +1423,11 @@ export class CustomersService {
       if (customerKycDto.panImage) {
         customerToUpdate.set({ "verified.panVerified": false, "kycInfo.panImage": customerKycDto.panImage });
       }
-      if (customerKycDto.otherBackImage || customerKycDto.otherFrontImage) {
-        customerToUpdate.set({ "verified.otherVerified": false, "kycInfo.otherFrontImage": customerKycDto.otherFrontImage, "kycInfo.otherBackImage": customerKycDto.otherBackImage });
+      if (customerKycDto.otherFrontImage) {
+        customerToUpdate.set({ "verified.otherVerified": false, "kycInfo.otherFrontImage": customerKycDto.otherFrontImage });
+      }
+      if (customerKycDto.otherBackImage) {
+        customerToUpdate.set({ "verified.otherVerified": false, "kycInfo.otherBackImage": customerKycDto.otherBackImage });
       }
       if (customerKycDto.passbookImage) {
         customerToUpdate.set({ "verified.bankVerified": false, "kycInfo.passbookImage": customerKycDto.passbookImage });
@@ -1427,7 +1435,13 @@ export class CustomersService {
       if (customerKycDto.upiImage) {
         customerToUpdate.set({ "verified.upiVerified": false, "kycInfo.upiImage": customerKycDto.upiImage });
       }
-      customerToUpdate.set({ "kycInfo.gstinNo": customerKycDto.gstinNo, "kycInfo.panNo": customerKycDto.panNo, "kycInfo.aadharNo": customerKycDto.aadharNo, "kycInfo.otherNo": customerKycDto.otherNo, "kycInfo.otherName": customerKycDto.otherName });
+      // Blank / missing numbers keep the stored value (clearing is done via Reject).
+      for (const key of ['gstinNo', 'panNo', 'aadharNo', 'otherNo', 'otherName']) {
+        const value = (customerKycDto as any)[key];
+        if (typeof value === 'string' && value.trim() !== '' && value !== 'undefined' && value !== 'null') {
+          customerToUpdate.set({ [`kycInfo.${key}`]: value.trim() });
+        }
+      }
       return await customerToUpdate.save();
     } catch (err) {
       throw new BadRequestException(err);
@@ -2291,8 +2305,8 @@ export class CustomersService {
       const value = details[key];
       if (typeof value !== 'string') continue;
       const trimmed = value.trim();
-      // Name fields must not be blanked; other details may be cleared.
-      if (!trimmed && (key === 'contactPerson' || key === 'firmName')) continue;
+      // A blank field keeps the stored value; verifying never erases data.
+      if (!trimmed) continue;
       const path = detailPaths[key];
       const finalValue = key === 'ifsc' ? trimmed.toUpperCase() : trimmed;
       if (key === 'ifsc' && finalValue && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(finalValue))
@@ -2744,27 +2758,44 @@ export class CustomersService {
 
   public async updateCustomerBankInfo(bankInfoDto: BankInfoDTO, customerid, upiInfo: UpiInfoDTO): Promise<any> {
     try {
-      let customerData = await this.customerModel.findOne({ _id: ObjectId(customerid) });
-      if (customerData?.benifresiry?.bankAccountBeneficiaryId) {
+      const customerData = await this.customerModel.findOne({ _id: ObjectId(customerid) });
+      const settingData: any = await this.settingCustomerModel.findOne({ customerid: ObjectId(customerid) }).lean();
+      const oldBank = settingData?.bankInfo || {};
+      const oldUpi = settingData?.upiInfo || {};
+      const filled = (v: any) => typeof v === 'string' ? v.trim() !== '' && v !== 'undefined' && v !== 'null' : v != null;
+
+      // Only fields the admin actually filled are written. Blank fields keep
+      // the stored value, and verified / verifiedBy / branch are never
+      // touched, so saving the KYC form can't wipe or un-verify existing data.
+      const settingSet: any = {};
+      for (const key of ['accountNo', 'holderName', 'bankName', 'ifsc', 'accountType', 'image']) {
+        if (filled((bankInfoDto as any)?.[key])) settingSet[`bankInfo.${key}`] = String((bankInfoDto as any)[key]).trim();
+      }
+      for (const key of ['upiNumber', 'upiHolderName']) {
+        if (filled((upiInfo as any)?.[key])) settingSet[`upiInfo.${key}`] = String((upiInfo as any)[key]).trim();
+      }
+
+      // The payout beneficiary is tied to the account / VPA, so drop it only
+      // when those actually change.
+      const bankChanged = (filled(bankInfoDto?.accountNo) && String(bankInfoDto.accountNo).trim() !== String(oldBank.accountNo ?? '').trim())
+        || (filled(bankInfoDto?.ifsc) && String(bankInfoDto.ifsc).trim() !== String(oldBank.ifsc ?? '').trim());
+      const upiChanged = filled(upiInfo?.upiNumber) && String(upiInfo.upiNumber).trim() !== String(oldUpi.upiNumber ?? '').trim();
+      const customerSet: any = {};
+      if (bankChanged && customerData?.benifresiry?.bankAccountBeneficiaryId) {
         await this.deleteBenifresiry(customerData.benifresiry.bankAccountBeneficiaryId);
+        customerSet["benifresiry.bankAccountBeneficiaryId"] = "";
       }
-      if (customerData?.benifresiry?.upiBeneficiaryId) {
+      if (upiChanged && customerData?.benifresiry?.upiBeneficiaryId) {
         await this.deleteBenifresiry(customerData.benifresiry.upiBeneficiaryId);
+        customerSet["benifresiry.upiBeneficiaryId"] = "";
       }
-      if (upiInfo?.image) {
-        // add image in customer model kycInfo 
-        await this.customerModel.findOneAndUpdate({ _id: ObjectId(customerid) }, { $set: { "kycInfo.upiImage": upiInfo.image, "benifresiry": {} } }, { new: true, useFindAndModify: false })
+      if (upiInfo?.image) customerSet["kycInfo.upiImage"] = upiInfo.image;
+      if (Object.keys(customerSet).length) {
+        await this.customerModel.findOneAndUpdate({ _id: ObjectId(customerid) }, { $set: customerSet }, { new: true, useFindAndModify: false })
       }
-      else {
-        await this.customerModel.findOneAndUpdate({ _id: ObjectId(customerid) }, { $set: { "benifresiry": {} } }, { new: true, useFindAndModify: false })
-      }
-      const settingData = await this.settingCustomerModel.findOne({ customerid: ObjectId(customerid) });
-      let upiObj = {
-        upiNumber: upiInfo?.upiNumber,
-        customerid: upiInfo?.customerid,
-        verified: settingData?.upiInfo?.verified
-      }
-      return await this.settingCustomerModel.findOneAndUpdate({ customerid: ObjectId(customerid) }, { $set: { bankInfo: bankInfoDto, upiInfo: upiObj } }, { new: true, upsert: true, setDefaultsOnInsert: false })
+
+      if (!Object.keys(settingSet).length) return settingData;
+      return await this.settingCustomerModel.findOneAndUpdate({ customerid: ObjectId(customerid) }, { $set: settingSet }, { new: true, upsert: true, setDefaultsOnInsert: false })
         .lean();
     } catch (err) {
       throw new BadRequestException("Invalid email or password.");
