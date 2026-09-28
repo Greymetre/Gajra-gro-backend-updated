@@ -356,6 +356,20 @@ export class KycVerifiedDTO {
     @IsEnum(VerifiedTo)
     @Transform(({ value }) => value?.trim())
     verifiedTo: string;
+
+    // Document number entered/corrected in the admin viewer; saved together
+    // with the verification. Omit to keep the stored number.
+    @ApiProperty({ required: false })
+    @IsOptional()
+    @IsString()
+    @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+    docNo?: string;
+
+    // false un-verifies the document. Defaults to true.
+    @ApiProperty({ required: false })
+    @IsOptional()
+    @IsBoolean()
+    verified?: boolean;
 };
 
 export class KycRejectDTO {

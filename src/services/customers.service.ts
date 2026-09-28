@@ -2236,17 +2236,60 @@ export class CustomersService {
   };
 
   public async kycVerified(kycVerifiedDTO: KycVerifiedDTO): Promise<any> {
+    const isVerified = kycVerifiedDTO.verified !== false;
+    const docNo = kycVerifiedDTO.docNo;
+    const hasDocNo = typeof docNo === 'string' && docNo !== '';
+
+    // Where each document's number lives: on the customer (kycInfo) or on the
+    // customer's settings (bank / UPI).
+    const customerNoPath = {
+      'verified.gstinVerified': 'kycInfo.gstinNo',
+      'verified.panVerified': 'kycInfo.panNo',
+      'verified.aadharVerified': 'kycInfo.aadharNo',
+      'verified.otherVerified': 'kycInfo.otherNo',
+    }[kycVerifiedDTO.verifiedTo];
+    const settingNoPath = {
+      'verified.bankVerified': 'bankInfo.accountNo',
+      'verified.upiVerified': 'upiInfo.upiNumber',
+    }[kycVerifiedDTO.verifiedTo];
+
+    if (hasDocNo) {
+      if (kycVerifiedDTO.verifiedTo == 'verified.panVerified' && !/^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(docNo))
+        throw new BadRequestException("Invalid PAN number");
+      if (kycVerifiedDTO.verifiedTo == 'verified.aadharVerified' && !/^[0-9]{12}$/.test(docNo))
+        throw new BadRequestException("Invalid Aadhaar number");
+      if (kycVerifiedDTO.verifiedTo == 'verified.bankVerified' && !/^\d{9,18}$/.test(docNo))
+        throw new BadRequestException("Invalid bank account number");
+    }
+
+    const customerSet: any = { [kycVerifiedDTO.verifiedTo]: isVerified };
+    if (hasDocNo && customerNoPath) {
+      const upper = ['kycInfo.gstinNo', 'kycInfo.panNo'].includes(customerNoPath);
+      customerSet[customerNoPath] = upper ? docNo.toUpperCase() : docNo;
+    }
+    const settingSet: any = {};
+    if (hasDocNo && settingNoPath) settingSet[settingNoPath] = docNo;
+    if (kycVerifiedDTO.verifiedTo == 'verified.upiVerified') settingSet['upiInfo.verified'] = isVerified;
+
     try {
+      if (Object.keys(settingSet).length) {
+        await this.settingCustomerModel.findOneAndUpdate({ customerid: ObjectId(kycVerifiedDTO.customerid) },
+          { $set: settingSet },
+          { new: true, useFindAndModify: false, upsert: true }
+        );
+      }
 
       return await this.customerModel.findOneAndUpdate({ _id: ObjectId(kycVerifiedDTO.customerid) },
         {
-          $set: { [kycVerifiedDTO.verifiedTo]: true }
+          $set: customerSet
         },
         { new: true, useFindAndModify: false }
       )
         .then(async (setting) => {
           if (!setting)
             throw new BadRequestException("Customer Info Not Exist");
+          // No "approved" push when an admin un-verifies.
+          if (!isVerified) return setting;
           const findCustomer = await this.customerModel.findOne({ _id: ObjectId(kycVerifiedDTO.customerid) })
           if (findCustomer && findCustomer.deviceInfo.deviceToken) {
             const token = findCustomer.deviceInfo.deviceToken
@@ -2265,20 +2308,6 @@ export class CustomersService {
               stringValue = "bankVerified";
             } else if (kycVerifiedDTO.verifiedTo == "verified.upiVerified") {
               stringValue = "upiVerified";
-              // update in setting customer
-              await this.settingCustomerModel.findOneAndUpdate({ customerid: ObjectId(kycVerifiedDTO.customerid) },
-                {
-                  $set: {
-                    "upiInfo.verified": true
-                  },
-                },
-                { new: true, useFindAndModify: false }
-              )
-                .then((setting) => {
-                  if (!setting)
-                    throw new BadRequestException("Customer Info Not Exist");
-                  return setting;
-                });
             }
 
             await PushNotification(`${token}`, ` KYC is Approved ✅`, `${findCustomer.firmName}, your KYC Document ${stringValue} is Approved `, "Profile");
