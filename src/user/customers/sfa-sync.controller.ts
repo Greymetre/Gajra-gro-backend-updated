@@ -17,7 +17,7 @@ export class SfaSyncController {
     return await this.customersService.customerStatusFromSfa(body);
   }
 
-  // { month: "YYYY-MM" }: every mechanic's points and unique coupon scans of that month
+  // { month: "YYYY-MM" }: every mechanic's points, redeemed points and unique coupon scans of that month
   @Post('mechanics/monthly-summary')
   @HttpCode(200)
   protected async mechanicMonthlySummary(@Body() body: any) {
