@@ -86,3 +86,5 @@ TransactionSchema.index({ createdBy: 1, createdAt: -1 }, { background: true });
 TransactionSchema.index({ productid: 1, createdAt: -1 }, { background: true });
 TransactionSchema.index({ pointType: 1, createdAt: -1 }, { background: true });
 TransactionSchema.index({ coupon: 1, createdAt: -1 }, { background: true });
+// monthly credit totals for SFA (sfa-sync/mechanics/monthly-summary)
+TransactionSchema.index({ transactionType: 1, createdAt: -1 }, { background: true });

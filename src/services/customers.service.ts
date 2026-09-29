@@ -1771,6 +1771,51 @@ export class CustomersService {
     return { updated: 1, customerid: customer._id.toString() };
   };
 
+  /**
+   * { month: "YYYY-MM" }: points and coupon scans of every mechanic in that month (India time), for the
+   * SFA Mechanic Category report. Points = every credit (coupon scans, scheme points, welcome points);
+   * scans = distinct coupons, since one coupon gets a credit row per matching scheme.
+   * Welcome point rows carry no customerType, so mechanics are picked by the customer's own type.
+   */
+  public async mechanicMonthlySummary(body: any): Promise<any> {
+    const month = String(body?.month || '');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      throw new BadRequestException('month must be YYYY-MM');
+    }
+    const [year, mon] = month.split('-').map(Number);
+    const istOffset = 330 * 60 * 1000;
+    const from = new Date(Date.UTC(year, mon - 1, 1) - istOffset);
+    const to = new Date(Date.UTC(year, mon, 1) - istOffset);
+
+    const rows = await this.transactionModel.aggregate([
+      { $match: { transactionType: 'Cr', createdAt: { $gte: from, $lt: to } } },
+      // one row per customer + coupon first, so a coupon credited by two schemes is one scan
+      { $group: { _id: { customerid: '$customerid', coupon: { $ifNull: ['$coupon', ''] } }, points: { $sum: '$points' } } },
+      {
+        $group: {
+          _id: '$_id.customerid',
+          points: { $sum: '$points' },
+          scans: { $sum: { $cond: [{ $ne: ['$_id.coupon', ''] }, 1, 0] } },
+        }
+      },
+      { $lookup: { from: 'customers', localField: '_id', foreignField: '_id', as: 'customer' } },
+      { $unwind: '$customer' },
+      { $match: { 'customer.customerType': /^mechanic$/i } },
+      {
+        $project: {
+          _id: 0,
+          groCustomerId: { $toString: '$_id' },
+          sfaCustomerId: '$customer.sfaCustomerId',
+          mobile: '$customer.mobile',
+          points: 1,
+          scans: 1,
+        }
+      },
+    ]).allowDiskUse(true).exec();
+
+    return { month, count: rows.length, rows };
+  };
+
   public async welcomeTransactionsPoints(data, points): Promise<any> {
     const refno = await this.getNewRefNoTransaction();
     const customer = await this.customerModel.findOne({ _id: data._id });

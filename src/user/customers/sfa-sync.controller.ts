@@ -16,4 +16,11 @@ export class SfaSyncController {
   protected async customerStatus(@Body() body: any) {
     return await this.customersService.customerStatusFromSfa(body);
   }
+
+  // { month: "YYYY-MM" }: every mechanic's points and unique coupon scans of that month
+  @Post('mechanics/monthly-summary')
+  @HttpCode(200)
+  protected async mechanicMonthlySummary(@Body() body: any) {
+    return await this.customersService.mechanicMonthlySummary(body);
+  }
 }
