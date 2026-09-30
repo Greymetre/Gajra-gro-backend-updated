@@ -1774,8 +1774,9 @@ export class CustomersService {
   /**
    * { month: "YYYY-MM" }: points, redeemed points and coupon scans of every mechanic in that month (India time),
    * for the SFA Mechanic Category report and dashboard. Points = every credit (coupon scans, scheme points,
-   * welcome points); redeemed = every debit; scans = distinct coupons of the credits, since one coupon gets a
-   * credit row per matching scheme.
+   * welcome points); scans = distinct coupons of the credits, since one coupon gets a credit row per matching
+   * scheme; redeemed = points of the redemptions requested in the month that ended in status Success (a
+   * rejected / failed / pending request keeps its debit row, so debits are not used).
    * Welcome point rows carry no customerType, so mechanics are picked by the customer's own type.
    */
   public async mechanicMonthlySummary(body: any): Promise<any> {
@@ -1787,41 +1788,64 @@ export class CustomersService {
     const istOffset = 330 * 60 * 1000;
     const from = new Date(Date.UTC(year, mon - 1, 1) - istOffset);
     const to = new Date(Date.UTC(year, mon, 1) - istOffset);
-    const isCredit = { $eq: ['$transactionType', 'Cr'] };
 
-    const rows = await this.transactionModel.aggregate([
-      { $match: { transactionType: { $in: ['Cr', 'Dr'] }, createdAt: { $gte: from, $lt: to } } },
+    const credits = await this.transactionModel.aggregate([
+      { $match: { transactionType: 'Cr', createdAt: { $gte: from, $lt: to } } },
       // one row per customer + coupon first, so a coupon credited by two schemes is one scan
       {
         $group: {
-          _id: { customerid: '$customerid', coupon: { $cond: [isCredit, { $ifNull: ['$coupon', ''] }, ''] } },
-          points: { $sum: { $cond: [isCredit, '$points', 0] } },
-          redeemed: { $sum: { $cond: [isCredit, 0, '$points'] } },
+          _id: { customerid: '$customerid', coupon: { $ifNull: ['$coupon', ''] } },
+          points: { $sum: '$points' },
         }
       },
       {
         $group: {
           _id: '$_id.customerid',
           points: { $sum: '$points' },
-          redeemed: { $sum: '$redeemed' },
           scans: { $sum: { $cond: [{ $ne: ['$_id.coupon', ''] }, 1, 0] } },
         }
       },
-      { $lookup: { from: 'customers', localField: '_id', foreignField: '_id', as: 'customer' } },
-      { $unwind: '$customer' },
-      { $match: { 'customer.customerType': /^mechanic$/i } },
-      {
-        $project: {
-          _id: 0,
-          groCustomerId: { $toString: '$_id' },
-          sfaCustomerId: '$customer.sfaCustomerId',
-          mobile: '$customer.mobile',
-          points: 1,
-          redeemed: 1,
-          scans: 1,
-        }
-      },
     ]).allowDiskUse(true).exec();
+
+    const redemptions = await this.transactionModel.db.collection('redemptions').aggregate([
+      { $match: { status: { $regex: /^success$/i }, createdAt: { $gte: from, $lt: to } } },
+      { $group: { _id: '$customerid', redeemed: { $sum: '$points' } } },
+    ]).toArray();
+
+    // customer id => totals of the month
+    const totals = new Map<string, { points: number; scans: number; redeemed: number }>();
+    const totalsOf = (id: any) => {
+      const key = String(id);
+      if (!totals.has(key)) totals.set(key, { points: 0, scans: 0, redeemed: 0 });
+      return totals.get(key);
+    };
+    credits.forEach((c: any) => {
+      if (!c._id) return;
+      const t = totalsOf(c._id);
+      t.points += c.points || 0;
+      t.scans += c.scans || 0;
+    });
+    redemptions.forEach((r: any) => {
+      if (r._id) totalsOf(r._id).redeemed += r.redeemed || 0;
+    });
+
+    const ids = [...totals.keys()].map((id) => ObjectId(id));
+    const mechanics = await this.customerModel
+      .find({ _id: { $in: ids }, customerType: /^mechanic$/i })
+      .select('sfaCustomerId mobile')
+      .lean()
+      .exec();
+    const rows = mechanics.map((customer: any) => {
+      const t = totals.get(String(customer._id));
+      return {
+        groCustomerId: String(customer._id),
+        sfaCustomerId: customer.sfaCustomerId,
+        mobile: customer.mobile,
+        points: t.points,
+        redeemed: t.redeemed,
+        scans: t.scans,
+      };
+    });
 
     return { month, count: rows.length, rows };
   };
