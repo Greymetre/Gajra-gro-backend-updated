@@ -140,6 +140,12 @@ export class AddInvalidCouponDTO {
   @IsOptional()
   statusType: string;
 
+  // Damage entry date (YYYY-MM-DD, IST). Past date = back-dated entry.
+  @ApiProperty({ required: false })
+  @IsDateString()
+  @IsOptional()
+  createdAt: string;
+
 }
 
 

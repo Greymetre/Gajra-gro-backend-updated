@@ -12,6 +12,17 @@ import { getCustomerAuthInfo, uploadFile } from 'src/common/utils/jwt.helper';
 import { UploadFilesHelper,imageName } from 'src/common/utils/helper.service';
 import { CustomerIdDTO } from 'src/dto/dashboard-dto';
 import * as fs from 'fs';
+
+// Back-dated damage entry is allowed only from CRM web (admin user token has
+// userType, mobile app customer token has customerType). Mobile app requests
+// always use the current date.
+const allowDamageEntryDateOnlyForCrm = async (req: Request, addInvalidCouponDTO: AddInvalidCouponDTO) => {
+  const authInfo: any = await getCustomerAuthInfo(req.headers);
+  const isCrmUser = !!authInfo?.userType && !authInfo?.customerType;
+  if (!isCrmUser) {
+    delete addInvalidCouponDTO.createdAt;
+  }
+};
 @Controller('loyalty/transactions')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @UseInterceptors(TransformInterceptor)
@@ -91,6 +102,7 @@ export class TransactionsController {
 
 
          addInvalidCouponDTO.couponImage = []
+      await allowDamageEntryDateOnlyForCrm(req, addInvalidCouponDTO);
 
       if(files){
         let uploadedUrls:any = await imageName(req,files.couponImage)
@@ -120,6 +132,7 @@ export class TransactionsController {
   @Post('coupon-scan-by-admin')
   @HttpCode(200)
   protected async couponScansByAdmin(@Req() req: Request,@Body() addInvalidCouponDTO: AddInvalidCouponDTO) : Promise<SuccessResponse<any>> {
+    await allowDamageEntryDateOnlyForCrm(req, addInvalidCouponDTO);
     const data = await this.transactionService.couponScansByAdmin(req,addInvalidCouponDTO);
     return { data };
   };

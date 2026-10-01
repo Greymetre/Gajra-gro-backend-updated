@@ -43,6 +43,9 @@ export class InvalidCoupon {
 
     @Prop({ type: String , index: true })
     remark: string;
+
+    @Prop({ type: Boolean, default: false })
+    isBackDated: boolean;
 }
 
 export const InvalidCouponSchema = SchemaFactory.createForClass(InvalidCoupon);

@@ -689,7 +689,7 @@ export class TransactionsService {
     try {
       // Add creation timestamp
       transactions.forEach(transaction => {
-        transaction["createdAt"] = new Date();
+        transaction["createdAt"] = transaction["createdAt"] || new Date();
       });
 
       // Add customer type to transactions
@@ -844,6 +844,7 @@ export class TransactionsService {
     couponGg?: string;
     createdBy: any;
     schemeReferenceDate?: Date;
+    transactionDate?: Date;
   }): Promise<any[]> {
     const setting = await this.projectSettingModel
       .findOne({})
@@ -921,7 +922,7 @@ export class TransactionsService {
         pointType: scheme.schemeName || 'Coupon Scan',
         modifyByid: params.createdBy,
         createdBy: params.createdBy,
-        createdAt: new Date(),
+        createdAt: params.transactionDate || new Date(),
         customerType: params.customer.customerType,
       });
     }
@@ -1362,6 +1363,35 @@ export class TransactionsService {
   //     throw new InternalServerErrorException('error while getting transaction details' + e,);
   //   }
   // };
+
+  // Resolves the damage entry date selected by admin (YYYY-MM-DD, India date).
+  // Today/empty -> current time. Past date -> 12:00 IST of that day, so the
+  // date stays the same in both IST and UTC (reports use toISOString()).
+  private resolveDamageEntryDate(dateString?: string): { date: Date; isBackDated: boolean } {
+    if (!dateString) {
+      return { date: new Date(), isBackDated: false };
+    }
+
+    const day = dateString.split('T')[0];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      throw new BadRequestException('Invalid damage entry date');
+    }
+
+    const indiaOffsetInMilliseconds = 330 * 60 * 1000;
+    const todayInIndia = new Date(Date.now() + indiaOffsetInMilliseconds).toISOString().split('T')[0];
+    if (day > todayInIndia) {
+      throw new BadRequestException('Damage entry date cannot be in the future');
+    }
+    if (day === todayInIndia) {
+      return { date: new Date(), isBackDated: false };
+    }
+
+    const date = new Date(`${day}T12:00:00.000+05:30`);
+    if (isNaN(date.getTime())) {
+      throw new BadRequestException('Invalid damage entry date');
+    }
+    return { date, isBackDated: true };
+  }
 
   async getActiveSchemes(referenceDate?: Date): Promise<any> {
     const date = referenceDate ? new Date(referenceDate) : new Date();
@@ -1978,13 +2008,21 @@ export class TransactionsService {
         throw new BadRequestException("Customer not exit")
       }
 
-      const coupon = new this.invalidCouponModel({ ...addInvalidCouponDTO, createdAt: new Date() });
+      const entryDate = this.resolveDamageEntryDate(addInvalidCouponDTO.createdAt);
+      const coupon = new this.invalidCouponModel({
+        ...addInvalidCouponDTO,
+        createdAt: entryDate.date,
+        isBackDated: entryDate.isBackDated,
+      });
 
 
       if (coupon.save()) {
         return new GetTransactionInfoDto(coupon)
       }
     } catch (e) {
+      if (e instanceof BadRequestException) {
+        throw e;
+      }
       throw new InternalServerErrorException(e)
     }
   };
@@ -2265,11 +2303,16 @@ export class TransactionsService {
                 customer: findCustomer,
                 createdBy: authInfo._id,
                 schemeReferenceDate: findInvalidCoupon.createdAt,
+                // Back-dated entry: transaction also goes on the entry date
+                transactionDate: findInvalidCoupon.isBackDated ? findInvalidCoupon.createdAt : undefined,
               });
 
               const customerInfo = await this.getCustomerProfileInfo(findCustomer._id);
               await this.handleTransactions(transactions, customerInfo);
-              await this.invalidCouponModel.findByIdAndUpdate({ _id: statusCouponDto.invalidCouponid }, { createdAt: new Date(), statusType: statusCouponDto.statusType, remark: statusCouponDto.remark, modifyByid: authInfo._id })
+              await this.invalidCouponModel.findByIdAndUpdate({ _id: statusCouponDto.invalidCouponid }, {
+                ...(findInvalidCoupon.isBackDated ? {} : { createdAt: new Date() }),
+                statusType: statusCouponDto.statusType, remark: statusCouponDto.remark, modifyByid: authInfo._id
+              })
               const totalPoints = transactions.reduce((sum, transaction) => sum + Number(transaction.points || 0), 0);
               return { transactions, isError: false, message: `${totalPoints} points received successfully ` }
             }
@@ -2414,6 +2457,7 @@ export class TransactionsService {
     try {
 
       const authInfo = await getCustomerAuthInfo(req.headers)
+      const entryDate = this.resolveDamageEntryDate(addInvalidCouponDTO.createdAt);
       const findCustomer = await this.customerModel.findOne({ _id: ObjectId(addInvalidCouponDTO.customerid) });
       if (!findCustomer) {
         throw new BadRequestException("Customer not exist")
@@ -2452,7 +2496,8 @@ export class TransactionsService {
               couponGg: addInvalidCouponDTO.couponGg,
               customer: findCustomer,
               createdBy: authInfo._id,
-              schemeReferenceDate: new Date(),
+              schemeReferenceDate: entryDate.date,
+              transactionDate: entryDate.date,
             });
 
             const customerInfo = await this.getCustomerProfileInfo(findCustomer._id);
