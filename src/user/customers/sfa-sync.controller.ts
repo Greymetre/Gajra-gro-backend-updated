@@ -23,4 +23,11 @@ export class SfaSyncController {
   protected async mechanicMonthlySummary(@Body() body: any) {
     return await this.customersService.mechanicMonthlySummary(body);
   }
+
+  // { from: "YYYY-MM-DD", to: "YYYY-MM-DD", groCustomerIds: [...] }: points and unique coupon scans per customer per day
+  @Post('customers/daily-scans')
+  @HttpCode(200)
+  protected async customerDailyScans(@Body() body: any) {
+    return await this.customersService.customerDailyScans(body);
+  }
 }

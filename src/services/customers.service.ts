@@ -1850,6 +1850,64 @@ export class CustomersService {
     return { month, count: rows.length, rows };
   };
 
+  /**
+   * { from: "YYYY-MM-DD", to: "YYYY-MM-DD", groCustomerIds: [...] }: points and coupon scans of those customers
+   * per day (India time), for the SFA Month Movement report (scans of the mechanics an employee visited).
+   * Same counting as mechanicMonthlySummary: every credit's points, distinct coupons as scans. At most 62 days
+   * and 5000 customers per call.
+   */
+  public async customerDailyScans(body: any): Promise<any> {
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    const fromDay = String(body?.from || '');
+    const toDay = String(body?.to || '');
+    if (!day.test(fromDay) || !day.test(toDay) || fromDay > toDay) {
+      throw new BadRequestException('from / to must be YYYY-MM-DD, from <= to');
+    }
+    const istOffset = 330 * 60 * 1000;
+    const from = new Date(Date.parse(fromDay + 'T00:00:00Z') - istOffset);
+    const to = new Date(Date.parse(toDay + 'T00:00:00Z') + 24 * 3600 * 1000 - istOffset);
+    if (to.getTime() - from.getTime() > 62 * 24 * 3600 * 1000) {
+      throw new BadRequestException('at most 62 days per call');
+    }
+    const ids = (Array.isArray(body?.groCustomerIds) ? body.groCustomerIds : [])
+      .map((id: any) => String(id))
+      .filter((id: string) => ObjectId.isValid(id));
+    if (ids.length > 5000) {
+      throw new BadRequestException('at most 5000 customers per call');
+    }
+    if (!ids.length) {
+      return { from: fromDay, to: toDay, count: 0, rows: [] };
+    }
+
+    const rows = await this.transactionModel.aggregate([
+      { $match: { customerid: { $in: ids.map((id: string) => ObjectId(id)) }, transactionType: 'Cr', createdAt: { $gte: from, $lt: to } } },
+      {
+        $group: {
+          _id: {
+            customerid: '$customerid',
+            date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: '+05:30' } },
+            coupon: { $ifNull: ['$coupon', ''] },
+          },
+          points: { $sum: '$points' },
+        }
+      },
+      {
+        $group: {
+          _id: { customerid: '$_id.customerid', date: '$_id.date' },
+          points: { $sum: '$points' },
+          scans: { $sum: { $cond: [{ $ne: ['$_id.coupon', ''] }, 1, 0] } },
+        }
+      },
+    ]).allowDiskUse(true).exec();
+
+    return {
+      from: fromDay,
+      to: toDay,
+      count: rows.length,
+      rows: rows.map((r: any) => ({ groCustomerId: String(r._id.customerid), date: r._id.date, points: r.points || 0, scans: r.scans || 0 })),
+    };
+  };
+
   public async welcomeTransactionsPoints(data, points): Promise<any> {
     const refno = await this.getNewRefNoTransaction();
     const customer = await this.customerModel.findOne({ _id: data._id });
