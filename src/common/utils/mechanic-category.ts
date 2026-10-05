@@ -153,3 +153,53 @@ export async function refreshMechanicCategories(
   }
   return { period, mechanics: mechanics.length, saved: ops.length, categoryChanged: changed, counts };
 }
+
+// What each level code needs: points from / months scanned rule
+const VALUE_MIN = { HV: HIGH_VALUE_POINTS, MV: MEDIUM_VALUE_POINTS, LV: 0 };
+const FREQ_RANK = { LF: 0, MF: 1, HF: 2 };
+
+/**
+ * Mobile app: what a mechanic needs to reach the next category, from its saved loyaltyCategory.
+ * Of the level codes of the next category, the one with the fewest missing conditions (then the smallest
+ * points gap) is shown. Returns { current, next, requirements: [...] }; next null at Platinum.
+ */
+export function nextCategoryGuide(loyalty: any) {
+  const current = loyalty?.category || null;
+  const points = Number(loyalty?.points || 0);
+  const activeMonths = Number(loyalty?.activeMonths || 0);
+  const activeQuarters = Number(loyalty?.activeQuarters || 0);
+  const freq = activeMonths >= PERIOD_MONTHS ? 'HF' : activeQuarters >= 4 ? 'MF' : 'LF';
+  const base = { current, points, activeMonths, activeQuarters, period: loyalty?.period || '' };
+
+  if (!current) {
+    return { ...base, next: 'Bronze', requirements: [{ type: 'firstScan' }] };
+  }
+  const rank = MECHANIC_CATEGORIES.indexOf(current);
+  if (rank <= 0) {
+    return { ...base, next: null, requirements: [] };
+  }
+  const next = MECHANIC_CATEGORIES[rank - 1];
+  const options = Object.keys(CATEGORY_BY_CODE)
+    .filter((code) => CATEGORY_BY_CODE[code] === next)
+    .map((code) => {
+      const [value, f] = code.split('-');
+      const requirements: any[] = [];
+      if (points < VALUE_MIN[value]) {
+        requirements.push({ type: 'points', target: VALUE_MIN[value], needed: Math.ceil(VALUE_MIN[value] - points) });
+      }
+      if (FREQ_RANK[freq] < FREQ_RANK[f]) {
+        requirements.push(f === 'HF'
+          ? { type: 'everyMonth', target: PERIOD_MONTHS, done: activeMonths }
+          : { type: 'everyQuarter', target: 4, done: activeQuarters });
+      }
+      const gap = requirements.find((r) => r.type === 'points')?.needed || 0;
+      // where meeting them really lands (e.g. Gold with 25,000+ points scanning every month = Platinum)
+      const reachedValue = points >= HIGH_VALUE_POINTS || value === 'HV' ? 'HV' : points >= MEDIUM_VALUE_POINTS || value === 'MV' ? 'MV' : 'LV';
+      const reachedFreq = FREQ_RANK[freq] >= FREQ_RANK[f] ? freq : f;
+      return { requirements, gap, reaches: CATEGORY_BY_CODE[reachedValue + '-' + reachedFreq] };
+    })
+    .filter((o) => o.requirements.length)
+    .sort((a, b) => a.requirements.length - b.requirements.length || a.gap - b.gap);
+  return { ...base, next: options[0]?.reaches || next, requirements: options[0]?.requirements || [] };
+}
+

@@ -30,7 +30,7 @@ import { SendOTPMessage } from "src/common/utils/send.message";
 import axios from "axios";
 import { normalizeMobile, sfaRequestConfig, sfaUrl } from "src/common/utils/sfa-client";
 import { syncCustomersFromSfa } from "src/common/utils/sfa-customer-sync";
-import { MECHANIC_CATEGORIES, refreshMechanicCategories } from "src/common/utils/mechanic-category";
+import { MECHANIC_CATEGORIES, nextCategoryGuide, refreshMechanicCategories } from "src/common/utils/mechanic-category";
 import { PaginationRequestDto } from "src/dto/pagination-dto";
 import { CustomerIdDTO } from "src/dto/dashboard-dto";
 import { CustomerViewInterface } from "src/interfaces/customer.interface";
@@ -512,6 +512,7 @@ export class CustomersService {
               userInfo: { $ifNull: ["$userInfo", []] },
               active: { $ifNull: ["$active", false] },
               createdAt: { $ifNull: ["$createdAt", false] },
+              loyaltyCategory: { $ifNull: ["$loyaltyCategory", null] },
             },
           },
           { $limit: 1 },
@@ -519,6 +520,12 @@ export class CustomersService {
         .exec();
       if (!data) {
         throw new BadRequestException("Data Not Found");
+      }
+      // Mobile app: mechanic category and what is needed for the next one
+      if (data[0] && /^mechanic$/i.test(data[0].customerType || "")) {
+        data[0].loyaltyGuide = nextCategoryGuide(data[0].loyaltyCategory);
+      } else if (data[0]) {
+        delete data[0].loyaltyCategory;
       }
       return new GetCustomerInfoDto(data[0]);
     } catch (e) {
