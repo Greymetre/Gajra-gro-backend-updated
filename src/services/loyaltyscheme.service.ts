@@ -89,6 +89,7 @@ export class LoyaltyschemeService {
             createdAt: { $ifNull: ["$createdAt", ""] },
             active: { $ifNull: ["$active", false] },
             // CRM scheme list cards
+            schemeTag: { $ifNull: ["$schemeTag", ""] },
             customerType: { $ifNull: ["$customerType", []] },
             basedOn: { $ifNull: ["$basedOn", ""] },
             frequency: { $ifNull: ["$frequency", ""] },

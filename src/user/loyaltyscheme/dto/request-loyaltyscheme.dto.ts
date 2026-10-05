@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsNotEmpty, IsNumber, IsArray, IsDefined, IsDateString, IsMongoId, IsObject, ValidateNested, IsBoolean } from 'class-validator';
+import { IsOptional, IsString, IsNotEmpty, IsNumber, IsArray, IsDefined, IsDateString, IsMongoId, IsObject, ValidateNested, IsBoolean, IsIn } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { Types, ObjectId } from "mongoose";
 
@@ -139,6 +139,11 @@ export class CreateLoyaltyschemeDto {
     @ValidateNested({ each: true })
     @Type(() => CategoryPercentageDTO)
     categoryPercentages: CategoryPercentageDTO[];
+
+    @ApiProperty({ enum: ['Regular', 'Booster'] })
+    @IsOptional()
+    @IsIn(['Regular', 'Booster'])
+    schemeTag: string;
 }
 
 export class UpdateLoyaltyschemeDto extends CreateLoyaltyschemeDto {

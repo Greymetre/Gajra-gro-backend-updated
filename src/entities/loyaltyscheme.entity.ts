@@ -83,6 +83,10 @@ export class Loyaltyscheme {
     @Prop({ type: Boolean , default: true })
     active: Boolean;
 
+    // What kind of scheme it is: "Regular" (base points) or "Booster" (extra points on top)
+    @Prop({ type: String, index: true })
+    schemeTag: string;
+
     // basedOn "Percentage" for mechanics: total % of the normal schemes' points per mechanic category
     // (Platinum 250 = 100% normal + 150% from this scheme), see isCategoryScheme in loyalty.helper.ts
     @Prop({ type: [Object], default: [] })
