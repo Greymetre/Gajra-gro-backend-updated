@@ -88,6 +88,12 @@ export class LoyaltyschemeService {
             schemeType: { $ifNull: ["$schemeType", ""] },
             createdAt: { $ifNull: ["$createdAt", ""] },
             active: { $ifNull: ["$active", false] },
+            // CRM scheme list cards
+            customerType: { $ifNull: ["$customerType", []] },
+            basedOn: { $ifNull: ["$basedOn", ""] },
+            frequency: { $ifNull: ["$frequency", ""] },
+            categoryPercentages: { $ifNull: ["$categoryPercentages", []] },
+            productCount: { $size: { $reduce: { input: { $ifNull: ["$schemeDetail", []] }, initialValue: [], in: { $setUnion: ["$$value", { $ifNull: ["$$this.products", []] }] } } } },
           },
         },
       ]).exec()
