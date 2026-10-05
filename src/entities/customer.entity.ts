@@ -197,6 +197,35 @@ export class Customer {
 
   @Prop({ type: Date })
   loginAt: Date;
+
+  // Mechanics: loyalty category of the 12 months ending last month (common/utils/mechanic-category.ts, daily cron);
+  // category null = no coupon scan in the period
+  @Prop({ type: Object })
+  loyaltyCategory: {
+    category: string;
+    levelCode?: string;
+    points?: number;
+    scans?: number;
+    activeMonths?: number;
+    activeQuarters?: number;
+    period: string;
+    endMonth: string;
+    updatedAt: Date;
+  };
+
+  // Every change of loyaltyCategory.category (e.g. Gold -> Diamond), latest last
+  @Prop({ type: [Object], default: undefined })
+  loyaltyCategoryHistory: Array<{
+    from: string;
+    to: string;
+    levelCode: string;
+    period: string;
+    endMonth: string;
+    changedAt: Date;
+  }>;
 }
 
 export const CustomerSchema = SchemaFactory.createForClass(Customer);
+
+// CRM customer list filter by mechanic category
+CustomerSchema.index({ 'loyaltyCategory.category': 1 }, { background: true, sparse: true });

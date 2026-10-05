@@ -30,6 +30,7 @@ import { SendOTPMessage } from "src/common/utils/send.message";
 import axios from "axios";
 import { normalizeMobile, sfaRequestConfig, sfaUrl } from "src/common/utils/sfa-client";
 import { syncCustomersFromSfa } from "src/common/utils/sfa-customer-sync";
+import { MECHANIC_CATEGORIES, refreshMechanicCategories } from "src/common/utils/mechanic-category";
 import { PaginationRequestDto } from "src/dto/pagination-dto";
 import { CustomerIdDTO } from "src/dto/dashboard-dto";
 import { CustomerViewInterface } from "src/interfaces/customer.interface";
@@ -644,6 +645,16 @@ export class CustomersService {
       if (paginationDto.customerType?.length) {
         customerTypeCond = { customerType: { $in: paginationDto.customerType } };
       }
+      // mechanic loyalty category: Platinum / Diamond / Gold / Silver / Bronze, "None" = no scan in the period
+      let loyaltyCategoryCond: any = {};
+      if (Array.isArray(paginationDto.loyaltyCategory) && paginationDto.loyaltyCategory.length) {
+        const named = paginationDto.loyaltyCategory.filter((c) => MECHANIC_CATEGORIES.includes(c));
+        const or: any[] = named.length ? [{ "loyaltyCategory.category": { $in: named } }] : [];
+        if (paginationDto.loyaltyCategory.includes("None")) {
+          or.push({ customerType: /^mechanic$/i, "loyaltyCategory.category": null });
+        }
+        loyaltyCategoryCond = or.length ? { $or: or } : {};
+      }
       let pendingCondition = {
         $and: [
           { "kycInfo.aadharFrontImage": { $ne: "" } },
@@ -764,7 +775,7 @@ export class CustomersService {
       }
       const data = await this.customerModel
         .aggregate([
-          { $match: customerTypeCond },
+          { $match: { $and: [customerTypeCond, loyaltyCategoryCond] } },
           {
             $lookup: {
               from: "settingcustomers",
@@ -889,6 +900,11 @@ export class CustomersService {
               location: { $ifNull: ["$location", {}] },
               phone: { $ifNull: ["$phone", ""] },
               grade: { $ifNull: ["$grade", ""] },
+              // flat, so the CRM Excel export gets plain columns
+              mechanicCategory: { $ifNull: ["$loyaltyCategory.category", ""] },
+              mechanicLevelCode: { $ifNull: ["$loyaltyCategory.levelCode", ""] },
+              mechanicCategoryPoints: { $ifNull: ["$loyaltyCategory.points", ""] },
+              mechanicCategoryPeriod: { $ifNull: ["$loyaltyCategory.period", ""] },
               status: { $ifNull: ["$status", ""] },
               active: { $ifNull: ["$active", false] },
               loginAt: { $ifNull: ["$loginAt", ""] },
@@ -1093,6 +1109,8 @@ export class CustomersService {
               visitingCard: { $ifNull: ["$visitingCard", ""] },
               shopimage: { $ifNull: ["$shopimage", ""] },
               grade: { $ifNull: ["$grade", "grade"] },
+              loyaltyCategory: { $ifNull: ["$loyaltyCategory", null] },
+              loyaltyCategoryHistory: { $ifNull: ["$loyaltyCategoryHistory", []] },
               status: { $ifNull: ["$status", ""] },
               userInfo: { $ifNull: ["$userAssignInfo", {}] },
               reportings: { $ifNull: ["$reportingInfo", {}] },
@@ -1779,6 +1797,11 @@ export class CustomersService {
    * rejected / failed / pending request keeps its debit row, so debits are not used).
    * Welcome point rows carry no customerType, so mechanics are picked by the customer's own type.
    */
+  // Recomputes every mechanic's loyalty category now (the daily cron does the same)
+  public async refreshMechanicCategories(): Promise<any> {
+    return refreshMechanicCategories(this.customerModel, this.transactionModel);
+  };
+
   public async mechanicMonthlySummary(body: any): Promise<any> {
     const month = String(body?.month || '');
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {

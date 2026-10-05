@@ -55,6 +55,18 @@ export class CronService {
     }
   }
 
+  // Mechanic loyalty category (Platinum .. Bronze) on the 12 months ending last month; a category change
+  // (e.g. Gold -> Diamond) shows in the CRM after this run
+  @Cron('0 3 * * *')
+  async cronJobForMechanicCategory() {
+    if (process.env.ENABLE_CRON_JOBS === 'false') return;
+    try {
+      console.log('Mechanic category refresh', JSON.stringify(await this.cronHelper.refreshMechanicCategories()));
+    } catch (error) {
+      console.error('Error in the cron job:', error);
+    }
+  }
+
   @Cron('* * * * *')
   async cronJobForGajraGro() {
     if (process.env.ENABLE_CRON_JOBS === 'false') return;

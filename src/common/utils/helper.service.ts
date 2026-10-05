@@ -18,6 +18,7 @@ import { sfaRequestConfig, sfaUrl } from './sfa-client';
 import { syncCustomersFromSfa } from './sfa-customer-sync';
 import { syncAllProductPricesToSfa } from './sfa-product-sync';
 import { syncLocationsFromSfa } from './sfa-location-sync';
+import { refreshMechanicCategories } from './mechanic-category';
 import { Country, CountryDocument } from '../../entities/country.entity';
 import { State, StateDocument } from '../../entities/state.entity';
 import { District, DistrictDocument } from '../../entities/district.entity';
@@ -411,6 +412,11 @@ export class CronHelper {
       districtModel: this.districtModel,
       cityModel: this.cityModel,
     }, full);
+  };
+
+  // Platinum / Diamond / Gold / Silver / Bronze of every mechanic (same matrix as the SFA Mechanic Category report)
+  public async refreshMechanicCategories(): Promise<any> {
+    return refreshMechanicCategories(this.customerModel, this.transactionModel);
   };
 
   public async checkCashfreeOrderStatus() {

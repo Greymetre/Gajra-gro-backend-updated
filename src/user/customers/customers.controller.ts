@@ -161,6 +161,14 @@ export class CustomersController {
     return { data };
   }
 
+  // Recompute every mechanic's loyalty category (Platinum .. Bronze) now instead of waiting for the daily cron
+  @Post('mechanicCategoryRefresh')
+  @HttpCode(200)
+  protected async mechanicCategoryRefresh(): Promise<SuccessResponse<any>> {
+    const data = await this.customersService.refreshMechanicCategories();
+    return { data };
+  }
+
   @ApiOperation({ summary: 'Update LoyaltyScheme' })
   @ApiResponse({ status: 200, description: 'Success', type: GetCustomerInfoDto })
   @ApiBadRequestResponse({ description: 'Invalid id or password' })

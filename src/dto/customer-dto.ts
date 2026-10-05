@@ -291,6 +291,12 @@ export class FilterPaginationCustomerDto extends PaginationRequestDto {
     @IsOptional()
     customerType: string[];
 
+    // Mechanic loyalty category: Platinum / Diamond / Gold / Silver / Bronze, "None" = not classified
+    @ApiProperty({ type: [String] })
+    @IsArray()
+    @IsOptional()
+    loyaltyCategory?: string[];
+
     @ApiProperty({ type: [String] })
     @IsArray()
     @IsOptional()
