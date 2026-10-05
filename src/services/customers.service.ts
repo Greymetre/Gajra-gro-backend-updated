@@ -1797,6 +1797,41 @@ export class CustomersService {
    * rejected / failed / pending request keeps its debit row, so debits are not used).
    * Welcome point rows carry no customerType, so mechanics are picked by the customer's own type.
    */
+  // CRM customer list tiles: mechanics, points and average points per category (saved loyaltyCategory)
+  public async mechanicCategorySummary(): Promise<any> {
+    const rows = await this.customerModel.aggregate([
+      { $match: { customerType: /^mechanic$/i, "loyaltyCategory.category": { $in: MECHANIC_CATEGORIES } } },
+      {
+        $group: {
+          _id: "$loyaltyCategory.category",
+          count: { $sum: 1 },
+          points: { $sum: { $ifNull: ["$loyaltyCategory.points", 0] } },
+          period: { $max: "$loyaltyCategory.period" },
+          updatedAt: { $max: "$loyaltyCategory.updatedAt" },
+        }
+      },
+    ]).exec();
+    const total = rows.reduce((sum, r) => sum + r.count, 0);
+    const totalPoints = rows.reduce((sum, r) => sum + r.points, 0);
+    const categories = MECHANIC_CATEGORIES.map((category) => {
+      const r = rows.find((row) => row._id === category) || { count: 0, points: 0 };
+      return {
+        category,
+        count: r.count,
+        share: total ? r.count / total : 0,
+        points: Math.round(r.points),
+        avgPoints: r.count ? Math.round(r.points / r.count) : 0,
+      };
+    });
+    const latest = rows.reduce((a, r) => (!a || (r.updatedAt && r.updatedAt > a.updatedAt) ? r : a), null);
+    return {
+      period: latest?.period || "",
+      updatedAt: latest?.updatedAt || null,
+      total: { count: total, points: Math.round(totalPoints), avgPoints: total ? Math.round(totalPoints / total) : 0 },
+      categories,
+    };
+  };
+
   // Recomputes every mechanic's loyalty category now (the daily cron does the same)
   public async refreshMechanicCategories(): Promise<any> {
     return refreshMechanicCategories(this.customerModel, this.transactionModel);

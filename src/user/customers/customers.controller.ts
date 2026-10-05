@@ -161,6 +161,14 @@ export class CustomersController {
     return { data };
   }
 
+  // Customer list tiles: mechanics / points per category (Platinum .. Bronze)
+  @Post('mechanicCategorySummary')
+  @HttpCode(200)
+  protected async mechanicCategorySummary(): Promise<SuccessResponse<any>> {
+    const data = await this.customersService.mechanicCategorySummary();
+    return { data };
+  }
+
   // Recompute every mechanic's loyalty category (Platinum .. Bronze) now instead of waiting for the daily cron
   @Post('mechanicCategoryRefresh')
   @HttpCode(200)
