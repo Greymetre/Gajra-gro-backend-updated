@@ -99,7 +99,7 @@ export class TransactionsService {
   };
 
   async getActiveSchemes(): Promise<any> {
-    return await this.schemeModel.find({ startedAt: { $lt: new Date() }, endedAt: { $gt: new Date() }, active: true }).select('schemeDetail schemeType schemeName customerType customers states cities basedOn frequency').exec()
+    return await this.schemeModel.find({ startedAt: { $lt: new Date() }, endedAt: { $gt: new Date() }, active: true }).select('schemeDetail schemeType schemeName customerType customers states cities basedOn frequency categoryPercentages').exec()
   };
 
   async getScanedCoupons(toscaned: any): Promise<any> {

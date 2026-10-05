@@ -82,6 +82,11 @@ export class Loyaltyscheme {
 
     @Prop({ type: Boolean , default: true })
     active: Boolean;
+
+    // basedOn "Percentage" for mechanics: total % of the normal schemes' points per mechanic category
+    // (Platinum 250 = 100% normal + 150% from this scheme), see isCategoryScheme in loyalty.helper.ts
+    @Prop({ type: [Object], default: [] })
+    categoryPercentages: Array<{ category: string; percentage: number }>;
 }
 
 export const LoyaltyschemeSchema = SchemaFactory.createForClass(Loyaltyscheme);

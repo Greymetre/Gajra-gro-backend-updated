@@ -13,7 +13,7 @@ import { GetTransactionInfoDto, GetAllTransactionDto } from '../user/transaction
 import { Request } from 'express';
 import { RemoveFilesHelper, PushNotification, listImagesByTimeWithVersions, uploadFolderToS3 } from "src/common/utils/helper.service";
 import { getAuthUserInfo, getCustomerAuthInfo } from '../common/utils/jwt.helper';
-import { dateFromFrequency, schemeBasedOnScan } from 'src/common/utils/loyalty.helper';
+import { categoryBonusPoints, dateFromFrequency, isCategoryScheme, schemeBasedOnScan } from 'src/common/utils/loyalty.helper';
 import { PaginationRequestDto } from 'src/dto/pagination-dto';
 import { asyncScheduler } from 'rxjs';
 import { StatusCouponDto } from 'src/user/coupons/dto/request-coupon.dto';
@@ -864,9 +864,12 @@ export class TransactionsService {
     }
 
     const schemes = await this.getActiveSchemes(params.schemeReferenceDate);
-    const validSchemes = schemes.filter((scheme) =>
+    const customerSchemes = schemes.filter((scheme) =>
       scheme.customerType.includes(customerInfo.customerType)
     );
+    // category schemes add a share of the normal schemes' points, after them
+    const validSchemes = customerSchemes.filter((scheme) => !isCategoryScheme(scheme));
+    const categorySchemes = customerSchemes.filter((scheme) => isCategoryScheme(scheme));
 
     let refno = await this.getNewRefNoTransaction();
     const transactions = [];
@@ -931,6 +934,20 @@ export class TransactionsService {
       throw new BadRequestException('NO_VALID_SCHEMES_FOUND');
     }
 
+    const basePoints = transactions.reduce((sum, t) => sum + (Number(t.points) || 0), 0);
+    for (const scheme of categorySchemes) {
+      const points = categoryBonusPoints(scheme, product._id, customerInfo.loyaltyCategory, basePoints);
+      if (points > 0) {
+        transactions.push({
+          ...transactions[0],
+          schemeid: scheme._id,
+          points,
+          refno: refno++,
+          pointType: scheme.schemeName || 'Coupon Scan',
+        });
+      }
+    }
+
     return transactions;
   }
 
@@ -984,9 +1001,12 @@ export class TransactionsService {
             return { ...item, isError: true, errorMessage: 'QRCODE_EXPIRE' };
           }
 
-          const validSchemes = schemes.filter((scheme) =>
+          const customerSchemes = schemes.filter((scheme) =>
             scheme.customerType.includes(customerInfo.customerType)
           );
+          // category schemes add a share of the normal schemes' points, after them
+          const validSchemes = customerSchemes.filter((scheme) => !isCategoryScheme(scheme));
+          const categorySchemes = customerSchemes.filter((scheme) => isCategoryScheme(scheme));
 
           if (validSchemes.length === 0) {
             return { ...item, isError: true, errorMessage: 'NO_VALID_SCHEMES_FOUND' };
@@ -1045,6 +1065,22 @@ export class TransactionsService {
               };
             })
           );
+
+          const credits: any[] = results.filter((r: any) => r.transactionType === 'Cr');
+          const basePoints = credits.reduce((sum, r: any) => sum + (Number(r.points) || 0), 0);
+          for (const scheme of categorySchemes) {
+            const points = categoryBonusPoints(scheme, couponDetailInfo.productid, customerInfo.loyaltyCategory, basePoints);
+            if (points > 0) {
+              refno++;
+              (results as any[]).push({
+                ...credits[0],
+                schemeid: scheme._id,
+                points,
+                pointType: scheme.schemeName || "Coupon Scan",
+                refno,
+              });
+            }
+          }
 
           return results.flat();
         })
@@ -1414,7 +1450,7 @@ export class TransactionsService {
       startedAt: { $lte: schemeDate },
       endedAt: { $gte: schemeDate },
       active: true,
-    }).select('schemeDetail schemeType schemeName customerType customers states cities basedOn frequency').exec()
+    }).select('schemeDetail schemeType schemeName customerType customers states cities basedOn frequency categoryPercentages').exec()
   };
 
   async getScanedCoupons(toscaned: any): Promise<any> {
@@ -1555,6 +1591,8 @@ export class TransactionsService {
             city: { $ifNull: ["$address.city", ""] },
             parentid: { $ifNull: ["$parentid", []] },
             active: { $ifNull: ["$active", false] },
+            // Platinum .. Bronze (mechanic category schemes)
+            loyaltyCategory: { $ifNull: ["$loyaltyCategory.category", ""] },
           },
         },
         { $limit: 1 },
@@ -1766,7 +1804,7 @@ export class TransactionsService {
           return { ...transaction, isError: true, errorMessage: 'QRCODE_EXPIRE' }
         }
         else {
-          return await Promise.all(schemes.map(async (scheme) => {
+          return await Promise.all(schemes.filter((scheme) => !isCategoryScheme(scheme)).map(async (scheme) => {
             const matchedProducts = await scheme.schemeDetail.find(obj => obj.products.includes(couponDetailInfo.productid));
             console.log('match', matchedProducts);
 

@@ -47,6 +47,18 @@ class schemeDetailDTO {
     points: number;
 }
 
+class CategoryPercentageDTO {
+    @ApiProperty()
+    @IsString()
+    @IsNotEmpty()
+    category: string;
+
+    @ApiProperty()
+    @IsNumber()
+    @Type(() => Number)
+    percentage: number;
+}
+
 export class CreateLoyaltyschemeDto {
     @ApiProperty()
     @IsString()
@@ -119,6 +131,14 @@ export class CreateLoyaltyschemeDto {
     @ValidateNested()
     @Type(() => schemeDetailDTO)
     schemeDetail: schemeDetailDTO;
+
+    // basedOn "Percentage": total % of normal scheme points per mechanic category (Platinum, Diamond, ...)
+    @ApiProperty({ type: [CategoryPercentageDTO] })
+    @IsOptional()
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => CategoryPercentageDTO)
+    categoryPercentages: CategoryPercentageDTO[];
 }
 
 export class UpdateLoyaltyschemeDto extends CreateLoyaltyschemeDto {
