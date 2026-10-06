@@ -37,6 +37,10 @@ import { CustomerViewInterface } from "src/interfaces/customer.interface";
 import { AddRemarkDTO } from "src/loyalty/remark/dto/request-remark.dto";
 import { Payouts } from '@cashfreepayments/cashfree-sdk';
 import { verify } from "crypto";
+// Google Play review account: fixed OTP, no SMS sent
+const PLAY_REVIEW_MOBILE = process.env.PLAY_REVIEW_MOBILE || '9303142046';
+const PLAY_REVIEW_OTP = parseInt(process.env.PLAY_REVIEW_OTP || '1234');
+
 @Injectable()
 export class CustomersService {
   private payoutsInstance: Payouts;
@@ -341,9 +345,10 @@ export class CustomersService {
 
   public async newOtpRequest(mobileDto: MobileRequestDto) {
     try {
-      var otp = Math.floor(1000 + Math.random() * 9000);
+      const isReviewMobile = mobileDto.mobile === PLAY_REVIEW_MOBILE;
+      var otp = isReviewMobile ? PLAY_REVIEW_OTP : Math.floor(1000 + Math.random() * 9000);
       var data = { mobile: mobileDto.mobile, otp: otp }
-      await SendOTPMessage(data)
+      if (!isReviewMobile) await SendOTPMessage(data)
       await this.logOtpRequest(data)
       return await this.customerModel.findOneAndUpdate({ mobile: mobileDto.mobile },
         { $set: { otp: otp } },
@@ -360,10 +365,11 @@ export class CustomersService {
 
   public async resendOtpRequest(mobileDto: MobileRequestDto) {
     try {
+      const isReviewMobile = mobileDto.mobile === PLAY_REVIEW_MOBILE;
       const sentOtp = await this.otpLogModel.findOne({ mobile: mobileDto.mobile }).sort({ createdAt: -1 }).select('otp');
-      var otp = await (!sentOtp) ? Math.floor(1000 + Math.random() * 9000) : sentOtp.otp
+      var otp = isReviewMobile ? PLAY_REVIEW_OTP : (!sentOtp) ? Math.floor(1000 + Math.random() * 9000) : sentOtp.otp
       var data = { mobile: mobileDto.mobile, otp: otp }
-      await SendOTPMessage(data)
+      if (!isReviewMobile) await SendOTPMessage(data)
       await this.logOtpRequest(data)
       return await this.customerModel.findOneAndUpdate({ mobile: mobileDto.mobile },
         { $set: { otp: otp } },
