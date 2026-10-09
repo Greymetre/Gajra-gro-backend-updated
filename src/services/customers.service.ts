@@ -1851,6 +1851,15 @@ export class CustomersService {
   };
 
   public async mechanicMonthlySummary(body: any): Promise<any> {
+    return this.customerMonthlySummary(body, /^mechanic$/i);
+  };
+
+  public async retailerMonthlySummary(body: any): Promise<any> {
+    return this.customerMonthlySummary(body, /^retailer$/i);
+  };
+
+  // points, redeemed points and unique coupon scans of that month for every customer of the type
+  private async customerMonthlySummary(body: any, customerType: RegExp): Promise<any> {
     const month = String(body?.month || '');
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
       throw new BadRequestException('month must be YYYY-MM');
@@ -1901,12 +1910,12 @@ export class CustomersService {
     });
 
     const ids = [...totals.keys()].map((id) => ObjectId(id));
-    const mechanics = await this.customerModel
-      .find({ _id: { $in: ids }, customerType: /^mechanic$/i })
+    const customers = await this.customerModel
+      .find({ _id: { $in: ids }, customerType })
       .select('sfaCustomerId mobile')
       .lean()
       .exec();
-    const rows = mechanics.map((customer: any) => {
+    const rows = customers.map((customer: any) => {
       const t = totals.get(String(customer._id));
       return {
         groCustomerId: String(customer._id),
