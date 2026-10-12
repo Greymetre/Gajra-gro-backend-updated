@@ -18,6 +18,7 @@ export class SfaSyncController {
   }
 
   // { month: "YYYY-MM" }: every mechanic's points, redeemed points and unique coupon scans of that month
+  // or { from: "YYYY-MM-DD", to: "YYYY-MM-DD" }: the same for those days
   @Post('mechanics/monthly-summary')
   @HttpCode(200)
   protected async mechanicMonthlySummary(@Body() body: any) {

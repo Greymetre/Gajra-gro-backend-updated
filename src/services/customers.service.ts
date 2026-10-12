@@ -1858,16 +1858,33 @@ export class CustomersService {
     return this.customerMonthlySummary(body, /^retailer$/i);
   };
 
-  // points, redeemed points and unique coupon scans of that month for every customer of the type
+  // points, redeemed points and unique coupon scans of that month for every customer of the type; or of the days
+  // { from: "YYYY-MM-DD", to: "YYYY-MM-DD" } (India time, at most 62) instead, for the SFA dashboard's Today
   private async customerMonthlySummary(body: any, customerType: RegExp): Promise<any> {
-    const month = String(body?.month || '');
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-      throw new BadRequestException('month must be YYYY-MM');
-    }
-    const [year, mon] = month.split('-').map(Number);
     const istOffset = 330 * 60 * 1000;
-    const from = new Date(Date.UTC(year, mon - 1, 1) - istOffset);
-    const to = new Date(Date.UTC(year, mon, 1) - istOffset);
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    const month = String(body?.month || '');
+    let from: Date;
+    let to: Date;
+    if (body?.from || body?.to) {
+      const fromDay = String(body?.from || '');
+      const toDay = String(body?.to || fromDay);
+      if (!day.test(fromDay) || !day.test(toDay) || fromDay > toDay) {
+        throw new BadRequestException('from / to must be YYYY-MM-DD, from <= to');
+      }
+      from = new Date(Date.parse(fromDay + 'T00:00:00Z') - istOffset);
+      to = new Date(Date.parse(toDay + 'T00:00:00Z') + 24 * 3600 * 1000 - istOffset);
+      if (to.getTime() - from.getTime() > 62 * 24 * 3600 * 1000) {
+        throw new BadRequestException('at most 62 days per call');
+      }
+    } else {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        throw new BadRequestException('month must be YYYY-MM');
+      }
+      const [year, mon] = month.split('-').map(Number);
+      from = new Date(Date.UTC(year, mon - 1, 1) - istOffset);
+      to = new Date(Date.UTC(year, mon, 1) - istOffset);
+    }
 
     const credits = await this.transactionModel.aggregate([
       { $match: { transactionType: 'Cr', createdAt: { $gte: from, $lt: to } } },
@@ -1927,7 +1944,7 @@ export class CustomersService {
       };
     });
 
-    return { month, count: rows.length, rows };
+    return { month, from: body?.from || null, to: body?.to || body?.from || null, count: rows.length, rows };
   };
 
   /**
