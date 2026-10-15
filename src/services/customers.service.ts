@@ -823,13 +823,38 @@ export class CustomersService {
             ? searchPincodeFilter
             : {},
           ],
-          $or: [
-            { firmName: { $regex: paginationDto.search, '$options': 'i' } },
-            { contactPerson: { $regex: paginationDto.search, '$options': 'i' } },
-            { mobile: { $regex: paginationDto.search, '$options': 'i' } },
-          ],
+          ...this.customerSearchCond(paginationDto.search),
         },
       };
+  }
+
+  // Search box: a full mobile number is matched exactly (index, one customer), a shorter number
+  // matches part of the mobile or an exact ref no, text matches firm / contact name.
+  private customerSearchCond(search?: string): any {
+    const text = (search || "").trim();
+    if (!text) return {};
+    const digits = text.replace(/[\s\-()]/g, "").replace(/^\+/, "");
+    if (/^\d+$/.test(digits)) {
+      // "+91 98988 88844", "098988 88844" and "9898888844" are the same number
+      const mobile = digits.length > 10 ? digits.slice(-10) : digits;
+      if (mobile.length === 10) {
+        return { mobile: { $in: [mobile, `+91${mobile}`, `91${mobile}`, `0${mobile}`] } };
+      }
+      return {
+        $or: [
+          { mobile: { $regex: mobile } },
+          ...(digits.length <= 9 ? [{ refno: Number(digits) }] : []),
+        ],
+      };
+    }
+    const pattern = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return {
+      $or: [
+        { firmName: { $regex: pattern, $options: "i" } },
+        { contactPerson: { $regex: pattern, $options: "i" } },
+        { mobile: { $regex: pattern, $options: "i" } },
+      ],
+    };
   }
 
   async getAllCustomer(paginationDto: FilterPaginationCustomerDto): Promise<any> {
