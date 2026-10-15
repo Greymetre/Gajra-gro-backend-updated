@@ -35,6 +35,13 @@ export class TransactionsController {
     return { data };
   }
 
+  @ApiOperation({ summary: 'Point types for the transaction filter: loyalty scheme names and every type in use' })
+  @Post('pointTypes')
+  protected async getPointTypes(): Promise<SuccessResponse<any>> {
+    const data = await this.transactionService.getPointTypes();
+    return { data };
+  }
+
   @ApiOperation({ summary: 'Get all beatschedules' })
   @ApiResponse({ status: 200, description: 'Mobile number is available', type: GetTransactionInfoDto })
   @ApiBadRequestResponse({ description: 'Invalid beatschedule id' })

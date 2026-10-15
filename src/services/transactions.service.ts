@@ -118,6 +118,18 @@ export class TransactionsService {
     throw new BadRequestException('Error in Create Transaction');
   };
 
+  // Scanned points carry the scheme name as pointType, so the filter options are the scheme names
+  // plus every pointType already on a transaction (Coupon Scan, Welcome Point, old schemes, ...)
+  async getPointTypes(): Promise<string[]> {
+    const [used, schemes] = await Promise.all([
+      this.transactionModel.distinct("pointType").exec(),
+      this.schemeModel.distinct("schemeName").exec(),
+    ]);
+    // values are kept as stored, the list filter matches them exactly
+    return Array.from(new Set([...schemes, ...used].filter((t) => typeof t === "string" && t.trim())))
+      .sort((a, b) => a.localeCompare(b));
+  }
+
   async getAllTransaction(paginationDto: FilterPaginationTransactionDto): Promise<any> {
     try {
       let condition = {}
