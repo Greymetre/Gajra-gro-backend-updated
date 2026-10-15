@@ -79,6 +79,13 @@ export class CustomersController {
     return { data };
   }
 
+  @ApiOperation({ summary: 'Customers per KYC status for the current list filters' })
+  @Post('kycCounts')
+  protected async getKycStatusCounts(@Body() paginationDto: FilterPaginationCustomerDto): Promise<SuccessResponse<any>> {
+    const data = await this.customersService.getKycStatusCounts(paginationDto);
+    return { data };
+  }
+
   @ApiOperation({ summary: 'Get paticular customer details' })
   @ApiUnauthorizedResponse({ description: 'Login required' })
   @ApiBadRequestResponse({ description: 'Invalid customer id' })

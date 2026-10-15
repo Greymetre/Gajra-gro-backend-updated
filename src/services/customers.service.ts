@@ -628,13 +628,10 @@ export class CustomersService {
     throw new BadRequestException("Error in Create Customer");
   };
 
-  async getAllCustomer(paginationDto: FilterPaginationCustomerDto): Promise<any> {
-    try {
-      const currentPage = paginationDto.currentPage || 1
-      const recordPerPage = paginationDto.recordPerPage || 10
-      let condition: any = {}
+  // Filters shared by the customer list and the KYC counts in the filter drawer
+  private buildCustomerListFilter(paginationDto: FilterPaginationCustomerDto) {
       let locationFilter: any = {};
-      let customerTypeCond: any = {}; 
+      let customerTypeCond: any = {};
       let searchPincodeFilter: any = {};
       if (paginationDto.postalCode?.length) {
         locationFilter["address.postalCode"] = { $in: paginationDto.postalCode };
@@ -654,7 +651,6 @@ export class CustomersService {
           $options: "i",
         };
       }
-
       if (paginationDto.customerType?.length) {
         customerTypeCond = { customerType: { $in: paginationDto.customerType } };
       }
@@ -737,16 +733,18 @@ export class CustomersService {
 
         ]
       };
-
-
+      // customer fields first, bank fields after, so the bank join can run on fewer customers
+      const approvedCustomerPart = [
+        { "kycInfo.aadharFrontImage": { $ne: "" } },
+        { "kycInfo.aadharBackImage": { $ne: "" } },
+        { "kycInfo.passbookImage": { $ne: "" } },
+        { "verified.aadharVerified": true },
+        { "verified.bankVerified": true },
+      ];
       let approvedCondition = {
         $and: [
-          { "kycInfo.aadharFrontImage": { $ne: "" } },
-          { "kycInfo.aadharBackImage": { $ne: "" } },
-          { "kycInfo.passbookImage": { $ne: "" } },
+          ...approvedCustomerPart,
           { "bankInfos.bankInfo.accountNo": { $ne: "" } },
-          { "verified.aadharVerified": true },
-          { "verified.bankVerified": true },
           {
             $or: [
               { "bankInfos.bankInfo.verified": true },
@@ -756,25 +754,6 @@ export class CustomersService {
         ]
       }
 
-      let conditions = [];
-      if (paginationDto.condition.includes("All")) {
-        conditions.push({});
-      } else {
-        if (paginationDto.condition.includes("Pending")) {
-          conditions.push(pendingCondition);
-        }
-        if (paginationDto.condition.includes("Rejected")) {
-          conditions.push(rejectedCondition);
-        }
-        if (paginationDto.condition.includes("Incomplete")) {
-          conditions.push(incompleteCondition);
-        }
-        if (paginationDto.condition.includes("Approved")) {
-          conditions.push(approvedCondition);
-        }
-      }
-      // let customerTypeCond = {};
-
       if (paginationDto.customerType.length === 1) {
         const customerType = paginationDto.customerType[0];
         if (customerType === "Mechanic" || customerType === "Retailer") {
@@ -782,12 +761,6 @@ export class CustomersService {
         }
       }
 
-
-      if (conditions.length > 0) {
-        condition = { $or: conditions };
-      }
-      // Only the "Approved" filter looks at bank details, so only then the join runs before
-      // the match; every other join runs on the one page that is returned, not on every customer.
       const bankInfoStages: any[] = [
         {
           $lookup: {
@@ -802,34 +775,69 @@ export class CustomersService {
         },
         { $unwind: { path: "$bankInfos", preserveNullAndEmptyArrays: true }, },
       ];
-      const filterOnBankInfo = conditions.includes(approvedCondition);
+      return {
+        bankInfoStages,
+        kycConditions: { Pending: pendingCondition, Rejected: rejectedCondition, Incomplete: incompleteCondition, Approved: approvedCondition },
+        approvedCustomerPart,
+        // customer type and mechanic category go first, they are indexed
+        firstMatch: { $and: [customerTypeCond, loyaltyCategoryCond] },
+        // everything else except KYC status
+        filterMatch: {
+          $and: [
+            paginationDto.startDate ? { createdAt: { $gte: new Date(paginationDto.startDate) } } : {},
+            paginationDto.endDate ? { createdAt: { $lt: new Date(paginationDto.endDate) } } : {},
+            paginationDto.existing ? { createdBy: { $exists: true } } : {},
+            paginationDto.self ? { createdBy: { $exists: false } } : {},
+            Object.keys(locationFilter).length ? locationFilter : {},
+            // paginationDto.status.length ? { status: { $in: paginationDto.status } } : {},
+            paginationDto.userid ? { "userAssign.userid": ObjectId(paginationDto.userid) } : {},
+            Object.keys(searchPincodeFilter).length
+            ? searchPincodeFilter
+            : {},
+          ],
+          $or: [
+            { firmName: { $regex: paginationDto.search, '$options': 'i' } },
+            { contactPerson: { $regex: paginationDto.search, '$options': 'i' } },
+            { mobile: { $regex: paginationDto.search, '$options': 'i' } },
+          ],
+        },
+      };
+  }
+
+  async getAllCustomer(paginationDto: FilterPaginationCustomerDto): Promise<any> {
+    try {
+      const currentPage = paginationDto.currentPage || 1
+      const recordPerPage = paginationDto.recordPerPage || 10
+      let condition: any = {}
+      const { bankInfoStages, kycConditions, firstMatch, filterMatch } = this.buildCustomerListFilter(paginationDto);
+      let conditions = [];
+      if (paginationDto.condition.includes("All")) {
+        conditions.push({});
+      } else {
+        if (paginationDto.condition.includes("Pending")) {
+          conditions.push(kycConditions.Pending);
+        }
+        if (paginationDto.condition.includes("Rejected")) {
+          conditions.push(kycConditions.Rejected);
+        }
+        if (paginationDto.condition.includes("Incomplete")) {
+          conditions.push(kycConditions.Incomplete);
+        }
+        if (paginationDto.condition.includes("Approved")) {
+          conditions.push(kycConditions.Approved);
+        }
+      }
+      if (conditions.length > 0) {
+        condition = { $or: conditions };
+      }
+      // Only the "Approved" filter looks at bank details, so only then the join runs before
+      // the match; every other join runs on the one page that is returned, not on every customer.
+      const filterOnBankInfo = conditions.includes(kycConditions.Approved);
       const data = await this.customerModel
         .aggregate([
-          { $match: { $and: [customerTypeCond, loyaltyCategoryCond] } },
+          { $match: firstMatch },
           ...(filterOnBankInfo ? bankInfoStages : []),
-          {
-            $match: {
-              $and: [
-                paginationDto.startDate ? { createdAt: { $gte: new Date(paginationDto.startDate) } } : {},
-                paginationDto.endDate ? { createdAt: { $lt: new Date(paginationDto.endDate) } } : {},
-                paginationDto.existing ? { createdBy: { $exists: true } } : {},
-                paginationDto.self ? { createdBy: { $exists: false } } : {},
-                Object.keys(locationFilter).length ? locationFilter : {},
-                // paginationDto.status.length ? { status: { $in: paginationDto.status } } : {},
-                paginationDto.userid ? { "userAssign.userid": ObjectId(paginationDto.userid) } : {},
-                paginationDto.condition ? condition : {},
-                Object.keys(searchPincodeFilter).length
-                ? searchPincodeFilter
-                : {},
-
-              ],
-              $or: [
-                { firmName: { $regex: paginationDto.search, '$options': 'i' } },
-                { contactPerson: { $regex: paginationDto.search, '$options': 'i' } },
-                { mobile: { $regex: paginationDto.search, '$options': 'i' } },
-              ],
-            },
-          },
+          { $match: { ...filterMatch, $and: [...filterMatch.$and, paginationDto.condition ? condition : {}] } },
           { $sort: { refno: -1 } },
           {
             $facet: {
@@ -961,6 +969,45 @@ export class CustomersService {
     } catch (e) {
       throw new InternalServerErrorException(
         "error while getting customer details" + e
+      );
+    }
+  };
+
+  // Customers per KYC status under every other filter of the list, for the filter drawer
+  async getKycStatusCounts(paginationDto: FilterPaginationCustomerDto): Promise<any> {
+    try {
+      const { bankInfoStages, kycConditions, approvedCustomerPart, firstMatch, filterMatch } =
+        this.buildCustomerListFilter(paginationDto);
+      const count = [{ $count: "total" }];
+      const data = await this.customerModel
+        .aggregate([
+          { $match: firstMatch },
+          { $match: filterMatch },
+          {
+            $facet: {
+              All: count,
+              Pending: [{ $match: kycConditions.Pending }, ...count],
+              Rejected: [{ $match: kycConditions.Rejected }, ...count],
+              Incomplete: [{ $match: kycConditions.Incomplete }, ...count],
+              // bank details are joined only for customers already verified on the customer side
+              Approved: [
+                { $match: { $and: approvedCustomerPart } },
+                ...bankInfoStages,
+                { $match: kycConditions.Approved },
+                ...count,
+              ],
+            },
+          },
+        ])
+        .exec();
+      const facets = data?.[0] || {};
+      return Object.keys(facets).reduce((acc: any, key) => {
+        acc[key] = facets[key]?.[0]?.total || 0;
+        return acc;
+      }, {});
+    } catch (e) {
+      throw new InternalServerErrorException(
+        "error while counting customers by KYC status" + e
       );
     }
   };
