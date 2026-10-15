@@ -13,6 +13,17 @@ import { dashboardDto } from '../users/dto/user.request.dto';
 export class DashboardController {
     constructor(private readonly dashboardService: DashboardService) {}
 
+  @ApiOperation({ summary: 'Dashboard overview for one customer type, optionally for a date range' })
+  @Get('overview')
+  protected async getOverview(
+    @Query("customerType") customerType: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ): Promise<SuccessResponse<any>> {
+    const data = await this.dashboardService.getOverview(customerType, from, to);
+    return { data };
+  }
+
   @ApiOperation({ summary: 'Get Desktop data' })
   @ApiResponse({ status: 200, description: 'Mobile number is available'})
   @ApiBadRequestResponse({ description: 'Invalid subcategory id' })
