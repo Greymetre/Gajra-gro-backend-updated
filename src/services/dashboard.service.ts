@@ -6,6 +6,7 @@ const ObjectId = require("mongoose").Types.ObjectId;
 import { Transaction, TransactionDocument, } from "src/entities/transaction.entity";
 import { Redemption, RedemptionDocument, } from "src/entities/redemption.entity";
 import { Coupon, CouponDocument } from "src/entities/coupon.entity";
+import { InvalidCoupon, InvalidCouponDocument } from "src/entities/invalidcoupon.entity";
 
 @Injectable()
 export class DashboardService {
@@ -14,6 +15,7 @@ export class DashboardService {
         @InjectModel(Transaction.name) private transactionModel: Model<TransactionDocument>,
         @InjectModel(Redemption.name) private redemptionModel: Model<RedemptionDocument>,
         @InjectModel(Coupon.name) private couponModel: Model<CouponDocument>,
+        @InjectModel(InvalidCoupon.name) private invalidCouponModel: Model<InvalidCouponDocument>,
     ) { }
     public async getCustomerDashboard(customerType:string): Promise<any> {
         var data = await this.customerModel.aggregate([
@@ -375,13 +377,14 @@ export class DashboardService {
         trendStart.setHours(0, 0, 0, 0);
         trendStart.setMonth(trendStart.getMonth() - 11);
 
-        const [customers, points, trendPoints, redemptions, trendRedemptions, couponsGenerated] = await Promise.all([
+        const [customers, points, trendPoints, redemptions, trendRedemptions, couponsGenerated, damage] = await Promise.all([
             this.customerOverview(typeCond, inPeriod, trendStart),
             this.pointsOverview(customerIds, inPeriod),
             this.monthlyScans(customerIds, trendStart),
             this.redemptionOverview(customerIds, inPeriod),
             this.monthlyRedemptions(customerIds, trendStart),
             this.couponModel.countDocuments({ ...typeCond, ...inPeriod }).exec(),
+            this.damageOverview(customerIds, inPeriod, trendStart),
         ]);
 
         const months: string[] = [];
@@ -392,6 +395,7 @@ export class DashboardService {
         const scansByMonth = byMonth(trendPoints);
         const redemptionsByMonth = byMonth(trendRedemptions);
         const newByMonth = byMonth(customers.trend);
+        const damageByMonth = byMonth(damage.trend);
         const trend = months.map((month) => ({
             month,
             scannedPoints: scansByMonth.get(month)?.points || 0,
@@ -400,6 +404,7 @@ export class DashboardService {
             redeemedPoints: redemptionsByMonth.get(month)?.points || 0,
             redemptions: redemptionsByMonth.get(month)?.count || 0,
             newCustomers: newByMonth.get(month)?.count || 0,
+            damageEntries: damageByMonth.get(month)?.count || 0,
         }));
 
         return {
@@ -407,12 +412,15 @@ export class DashboardService {
             period: { from: from || null, to: to || null },
             customers: { ...customers.totals, activeInPeriod: points.activeCustomers },
             points: {
-                earned: points.earned,
+                // earned leaves out welcome points of customers who never scanned in the period
+                earned: points.earned - (points.welcome - points.activeWelcome),
                 scanned: points.scanned,
-                welcome: points.welcome,
+                welcome: points.activeWelcome,
+                welcomeCustomers: points.activeWelcomeCustomers,
+                welcomeExcluded: points.welcome - points.activeWelcome,
                 other: points.earned - points.scanned - points.welcome,
                 redeemed: redemptions.redeemedPoints,
-                balance: points.earned - redemptions.redeemedPoints,
+                balance: points.earned - (points.welcome - points.activeWelcome) - redemptions.redeemedPoints,
             },
             coupons: {
                 generated: couponsGenerated,
@@ -423,6 +431,7 @@ export class DashboardService {
                 byStatus: redemptions.byStatus,
                 byMethod: redemptions.byMethod,
             },
+            damage: damage.totals,
             trend,
             topCustomers: points.topCustomers,
             topStates: customers.topStates,
@@ -512,6 +521,19 @@ export class DashboardService {
                             },
                         },
                     ],
+                    // welcome points only count for customers who also scanned in the same period
+                    activeWelcome: [
+                        { $match: { $or: [{ isScan: true }, { isWelcome: true }] } },
+                        {
+                            $group: {
+                                _id: "$customerid",
+                                scans: { $sum: { $cond: ["$isScan", 1, 0] } },
+                                welcome: { $sum: { $cond: ["$isWelcome", "$pts", 0] } },
+                            },
+                        },
+                        { $match: { scans: { $gt: 0 }, welcome: { $gt: 0 } } },
+                        { $group: { _id: null, points: { $sum: "$welcome" }, customers: { $sum: 1 } } },
+                    ],
                     uniqueCoupons: [
                         { $match: { isScan: true } },
                         { $group: { _id: "$coupon" } },
@@ -559,6 +581,8 @@ export class DashboardService {
             earned: totals.earned || 0,
             scanned: totals.scanned || 0,
             welcome: totals.welcome || 0,
+            activeWelcome: data?.activeWelcome?.[0]?.points || 0,
+            activeWelcomeCustomers: data?.activeWelcome?.[0]?.customers || 0,
             scans: totals.scans || 0,
             uniqueCoupons: data?.uniqueCoupons?.[0]?.count || 0,
             activeCustomers: data?.activeCustomers?.[0]?.count || 0,
@@ -641,5 +665,54 @@ export class DashboardService {
             },
         ]).allowDiskUse(true).exec();
     }
-}
 
+    // Damage entries: coupons a customer could not scan, sent with a photo for manual approval.
+    // An entry with no status is treated as Pending, as on the damage entry page.
+    private async damageOverview(customerIds: any[], inPeriod: any, trendStart: Date) {
+        const [data] = await this.invalidCouponModel.aggregate([
+            { $match: { customerid: { $in: customerIds } } },
+            { $addFields: { st: { $ifNull: ["$statusType", "Pending"] } } },
+            {
+                $facet: {
+                    byStatus: [
+                        ...(inPeriod.createdAt ? [{ $match: inPeriod }] : []),
+                        { $group: { _id: "$st", count: { $sum: 1 } } },
+                    ],
+                    customers: [
+                        ...(inPeriod.createdAt ? [{ $match: inPeriod }] : []),
+                        { $group: { _id: "$customerid" } },
+                        { $count: "count" },
+                    ],
+                    // the approval queue is about today, so the period filter does not apply here
+                    oldestPending: [
+                        { $match: { st: "Pending" } },
+                        { $sort: { createdAt: 1 } },
+                        { $limit: 1 },
+                        { $project: { _id: 0, createdAt: 1 } },
+                    ],
+                    trend: [
+                        { $match: { createdAt: { $gte: trendStart } } },
+                        {
+                            $group: {
+                                _id: { $dateToString: { format: "%Y-%m", date: "$createdAt", timezone: "Asia/Kolkata" } },
+                                count: { $sum: 1 },
+                            },
+                        },
+                    ],
+                },
+            },
+        ]).allowDiskUse(true).exec();
+        const counts: any = { Pending: 0, Approved: 0, Rejected: 0, Hold: 0 };
+        (data?.byStatus || []).forEach((row: any) => (counts[row._id] = (counts[row._id] || 0) + row.count));
+        const total = Object.values(counts).reduce((sum: number, n: any) => sum + n, 0);
+        return {
+            totals: {
+                total,
+                ...counts,
+                customers: data?.customers?.[0]?.count || 0,
+                oldestPendingAt: data?.oldestPending?.[0]?.createdAt || null,
+            },
+            trend: data?.trend || [],
+        };
+    }
+}

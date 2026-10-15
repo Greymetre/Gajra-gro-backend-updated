@@ -6,12 +6,14 @@ import { Customer, CustomerSchema } from '../../entities/customer.entity';
 import { Transaction, TransactionSchema } from '../../entities/transaction.entity';
 import { Redemption, RedemptionSchema } from '../../entities/redemption.entity';
 import { Coupon, CouponSchema } from '../../entities/coupon.entity';
+import { InvalidCoupon, InvalidCouponSchema } from '../../entities/invalidcoupon.entity';
 import { MongooseModule } from '@nestjs/mongoose'
 @Module({
   imports: [ MongooseModule.forFeature([{ name: Customer.name, schema: CustomerSchema },
     { name: Transaction.name, schema: TransactionSchema },
     { name: Redemption.name, schema: RedemptionSchema },
-    { name: Coupon.name, schema: CouponSchema }
+    { name: Coupon.name, schema: CouponSchema },
+    { name: InvalidCoupon.name, schema: InvalidCouponSchema },
   ])],
   controllers: [DashboardController],
   providers: [DashboardService]
