@@ -628,6 +628,34 @@ export class CustomersService {
     throw new BadRequestException("Error in Create Customer");
   };
 
+  // KYC is checked only for customers who can redeem: at least one QR scan and 300+ credit points
+  // (the same total that switches on the "Redemption is ON" notification). Cached briefly because it
+  // groups every credit transaction.
+  private redeemEligibleCache: { at: number; ids: any[] } | null = null;
+  private async redeemEligibleCustomerIds(): Promise<any[]> {
+    if (this.redeemEligibleCache && Date.now() - this.redeemEligibleCache.at < 5 * 60 * 1000) {
+      return this.redeemEligibleCache.ids;
+    }
+    const rows = await this.transactionModel
+      .aggregate([
+        { $match: { transactionType: "Cr" } },
+        {
+          $group: {
+            _id: "$customerid",
+            points: { $sum: { $convert: { input: "$points", to: "double", onError: 0, onNull: 0 } } },
+            scans: { $sum: { $cond: [{ $ne: [{ $ifNull: ["$coupon", ""] }, ""] }, 1, 0] } },
+          },
+        },
+        { $match: { points: { $gte: 300 }, scans: { $gt: 0 } } },
+        { $project: { _id: 1 } },
+      ])
+      .allowDiskUse(true)
+      .exec();
+    const ids = rows.map((row) => row._id);
+    this.redeemEligibleCache = { at: Date.now(), ids };
+    return ids;
+  }
+
   // Filters shared by the customer list and the KYC counts in the filter drawer
   private buildCustomerListFilter(paginationDto: FilterPaginationCustomerDto) {
       let locationFilter: any = {};
@@ -833,9 +861,11 @@ export class CustomersService {
       // Only the "Approved" filter looks at bank details, so only then the join runs before
       // the match; every other join runs on the one page that is returned, not on every customer.
       const filterOnBankInfo = conditions.includes(kycConditions.Approved);
+      // a KYC status filter lists only customers who can redeem, like the counts next to it
+      const eligibleCond = conditions.length ? { _id: { $in: await this.redeemEligibleCustomerIds() } } : {};
       const data = await this.customerModel
         .aggregate([
-          { $match: firstMatch },
+          { $match: { $and: [firstMatch, eligibleCond] } },
           ...(filterOnBankInfo ? bankInfoStages : []),
           { $match: { ...filterMatch, $and: [...filterMatch.$and, paginationDto.condition ? condition : {}] } },
           { $sort: { refno: -1 } },
@@ -979,9 +1009,10 @@ export class CustomersService {
       const { bankInfoStages, kycConditions, approvedCustomerPart, firstMatch, filterMatch } =
         this.buildCustomerListFilter(paginationDto);
       const count = [{ $count: "total" }];
+      const eligibleIds = await this.redeemEligibleCustomerIds();
       const data = await this.customerModel
         .aggregate([
-          { $match: firstMatch },
+          { $match: { $and: [firstMatch, { _id: { $in: eligibleIds } }] } },
           { $match: filterMatch },
           {
             $facet: {
