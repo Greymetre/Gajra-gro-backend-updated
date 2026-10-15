@@ -377,14 +377,14 @@ export class DashboardService {
         trendStart.setHours(0, 0, 0, 0);
         trendStart.setMonth(trendStart.getMonth() - 11);
 
-        const hasPeriod = !!inPeriod.createdAt;
-        const [customers, trendPoints, trendRedemptions, allTime, inRange] = await Promise.all([
+        const [customers, points, trendPoints, redemptions, trendRedemptions, couponsGenerated, damage] = await Promise.all([
             this.customerOverview(typeCond, inPeriod, trendStart),
+            this.pointsOverview(customerIds, inPeriod),
             this.monthlyScans(customerIds, trendStart),
+            this.redemptionOverview(customerIds, inPeriod),
             this.monthlyRedemptions(customerIds, trendStart),
-            this.activityStats(customerIds, typeCond, {}, trendStart),
-            // with a period chosen, the same numbers again for that period, shown next to all time
-            hasPeriod ? this.activityStats(customerIds, typeCond, inPeriod, trendStart) : null,
+            this.couponModel.countDocuments({ ...typeCond, ...inPeriod }).exec(),
+            this.damageOverview(customerIds, inPeriod, trendStart),
         ]);
 
         const months: string[] = [];
@@ -395,8 +395,7 @@ export class DashboardService {
         const scansByMonth = byMonth(trendPoints);
         const redemptionsByMonth = byMonth(trendRedemptions);
         const newByMonth = byMonth(customers.trend);
-        const { damageTrend, ...allTimeStats } = allTime;
-        const damageByMonth = byMonth(damageTrend);
+        const damageByMonth = byMonth(damage.trend);
         const trend = months.map((month) => ({
             month,
             scannedPoints: scansByMonth.get(month)?.points || 0,
@@ -408,42 +407,20 @@ export class DashboardService {
             damageEntries: damageByMonth.get(month)?.count || 0,
         }));
 
-        if (inRange) delete inRange.damageTrend;
-        const { total, selfRegistered, appUsers, blocked, newInPeriod } = customers.totals;
         return {
             customerType: type,
             period: { from: from || null, to: to || null },
-            // registrations and app usage, always all time
-            customers: { total, selfRegistered, appUsers, blocked },
-            allTime: { ...allTimeStats, newCustomers: total },
-            selected: inRange ? { ...inRange, newCustomers: newInPeriod } : null,
-            trend,
-            topStates: customers.topStates,
-        };
-    }
-
-    // Activity numbers for one date range (or all time when inPeriod is empty)
-    private async activityStats(customerIds: any[], typeCond: any, inPeriod: any, trendStart: Date) {
-        const [points, redemptions, couponsGenerated, damage] = await Promise.all([
-            this.pointsOverview(customerIds, inPeriod),
-            this.redemptionOverview(customerIds, inPeriod),
-            this.couponModel.countDocuments({ ...typeCond, ...inPeriod }).exec(),
-            this.damageOverview(customerIds, inPeriod, trendStart),
-        ]);
-        // welcome points of customers who never scanned in the range are left out
-        const welcomeExcluded = points.welcome - points.activeWelcome;
-        const earned = points.earned - welcomeExcluded;
-        return {
-            activeCustomers: points.activeCustomers,
+            customers: { ...customers.totals, activeInPeriod: points.activeCustomers },
             points: {
-                earned,
+                // earned leaves out welcome points of customers who never scanned in the period
+                earned: points.earned - (points.welcome - points.activeWelcome),
                 scanned: points.scanned,
                 welcome: points.activeWelcome,
                 welcomeCustomers: points.activeWelcomeCustomers,
-                welcomeExcluded,
+                welcomeExcluded: points.welcome - points.activeWelcome,
                 other: points.earned - points.scanned - points.welcome,
                 redeemed: redemptions.redeemedPoints,
-                balance: earned - redemptions.redeemedPoints,
+                balance: points.earned - (points.welcome - points.activeWelcome) - redemptions.redeemedPoints,
             },
             coupons: {
                 generated: couponsGenerated,
@@ -455,8 +432,9 @@ export class DashboardService {
                 byMethod: redemptions.byMethod,
             },
             damage: damage.totals,
-            damageTrend: damage.trend,
+            trend,
             topCustomers: points.topCustomers,
+            topStates: customers.topStates,
         };
     }
 
