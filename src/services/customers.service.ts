@@ -786,34 +786,27 @@ export class CustomersService {
       if (conditions.length > 0) {
         condition = { $or: conditions };
       }
+      // Only the "Approved" filter looks at bank details, so only then the join runs before
+      // the match; every other join runs on the one page that is returned, not on every customer.
+      const bankInfoStages: any[] = [
+        {
+          $lookup: {
+            from: "settingcustomers",
+            localField: "_id",
+            foreignField: "customerid",
+            pipeline: [
+              { $project: { _id: 1, bankInfo: 1, upiInfo: 1 } },
+            ],
+            as: "bankInfos",
+          },
+        },
+        { $unwind: { path: "$bankInfos", preserveNullAndEmptyArrays: true }, },
+      ];
+      const filterOnBankInfo = conditions.includes(approvedCondition);
       const data = await this.customerModel
         .aggregate([
           { $match: { $and: [customerTypeCond, loyaltyCategoryCond] } },
-          {
-            $lookup: {
-              from: "settingcustomers",
-              localField: "_id",
-              foreignField: "customerid",
-              pipeline: [
-                { $project: { _id: 1, bankInfo: 1, upiInfo: 1 } },
-              ],
-              as: "bankInfos",
-            },
-          },
-
-          {
-            $lookup: {
-              from: "remarks",
-              localField: "remarkid",
-              foreignField: "_id",
-              pipeline: [
-                { $project: { _id: 1, remark: 1, } },
-              ],
-              as: "remarkInfos",
-            },
-          },
-          { $unwind: { path: "$remarkInfos", preserveNullAndEmptyArrays: true }, },
-          { $unwind: { path: "$bankInfos", preserveNullAndEmptyArrays: true }, },
+          ...(filterOnBankInfo ? bankInfoStages : []),
           {
             $match: {
               $and: [
@@ -837,102 +830,6 @@ export class CustomersService {
               ],
             },
           },
-          {
-            $lookup: {
-              from: "users",
-              localField: "createdBy",
-              foreignField: "_id",
-              pipeline: [
-                { $project: { _id: 1, firstName: 1, lastName: 1, mobile: 1 } },
-              ],
-              as: "userInfo",
-            },
-          },
-          {
-            $lookup: {
-              from: "users",
-              localField: "userAssign.userid",
-              foreignField: "_id",
-              pipeline: [
-                { $project: { _id: 1, firstName: 1, lastName: 1, mobile: 1 } },
-              ],
-              as: "reportingInfo",
-            },
-          },
-          {
-            $lookup: {
-              from: "customers",
-              localField: "parentid",
-              foreignField: "_id",
-              pipeline: [
-                { $project: { _id: 1, firmName: 1, contactPerson: 1, mobile: 1 } },
-              ],
-              as: "parentInfo",
-            },
-          },
-          { $unwind: { path: "$userInfo", preserveNullAndEmptyArrays: true }, },
-          { $unwind: { path: "$reportingInfo", preserveNullAndEmptyArrays: true }, },
-          {
-            $project: {
-              createdAt: { $dateToString: { format: "%Y-%m-%d %H:%M", date: "$createdAt" } },
-              _id: 1,
-              createdBy: {
-                $concat: [
-                  { $ifNull: ["$userInfo.firstName", "Self"] },
-                  " ",
-                  { $ifNull: ["$userInfo.lastName", ""] }
-                ]
-              },
-
-              assignUser: {
-                $concat: [
-                  { $ifNull: ["$reportingInfo.firstName", ""] },
-                  " ",
-                  { $ifNull: ["$reportingInfo.lastName", ""] }
-                ]
-              },
-              customerType: { $ifNull: ["$customerType", ""] },
-              parentCustomer: {
-                $ifNull: [
-                  { $arrayElemAt: ["$parentInfo.firmName", 0] },
-                  { $ifNull: [{ $arrayElemAt: ["$parentInfo.contactPerson", 0] }, { $ifNull: ["$parentName", ""] }] },
-                ],
-              },
-              remark: { $ifNull: ["$remarkInfos.remark", ""] },
-              remarkid: { $ifNull: ["$remarkInfos.id", ""] },
-              firmName: { $ifNull: ["$firmName", ""] },
-              contactPerson: { $ifNull: ["$contactPerson", ""] },
-              refno: { $ifNull: ["$refno", 0] },
-              address: { $ifNull: ["$address.address", ""] },
-              postalCode: { $ifNull: ["$address.postalCode", ""] },
-              city: { $ifNull: ["$address.city", ""] },
-              state: { $ifNull: ["$address.state", ""] },
-              mobile: { $ifNull: ["$mobile", null] },
-              email: { $ifNull: ["$email", ""] },
-              avatar: { $ifNull: ["$avatar", ""] },
-              location: { $ifNull: ["$location", {}] },
-              phone: { $ifNull: ["$phone", ""] },
-              grade: { $ifNull: ["$grade", ""] },
-              // flat, so the CRM Excel export gets plain columns
-              mechanicCategory: { $ifNull: ["$loyaltyCategory.category", ""] },
-              mechanicLevelCode: { $ifNull: ["$loyaltyCategory.levelCode", ""] },
-              mechanicCategoryPoints: { $ifNull: ["$loyaltyCategory.points", ""] },
-              mechanicCategoryPeriod: { $ifNull: ["$loyaltyCategory.period", ""] },
-              status: { $ifNull: ["$status", ""] },
-              active: { $ifNull: ["$active", false] },
-              loginAt: { $ifNull: ["$loginAt", ""] },
-              accountNo: { $ifNull: ["$bankInfos.bankInfo.accountNo", ""] },
-              bankVee: { $ifNull: ["$bankInfos.bankInfo.verified", ""] },
-              BankName: { $ifNull: ["$bankInfos.bankInfo.bankName", ""] },
-              AccountHolderName: { $ifNull: ["$bankInfos.bankInfo.holderName", ""] },
-              UPIId: { $ifNull: ["$bankInfos.upiInfo.upiNumber", ""] },
-              AdharNumber: { $ifNull: ["$kycInfo.aadharNo", ""] },
-              PanNo: { $ifNull: ["$kycInfo.panNo", ""] },
-              IFSCCode: { $ifNull: ["$bankInfos.bankInfo.ifsc", ""] },
-              kycInfo: { $ifNull: ["$kycInfo", {}] },
-              verified: { $ifNull: ["$verified", {}] },
-            },
-          },
           { $sort: { refno: -1 } },
           {
             $facet: {
@@ -942,7 +839,116 @@ export class CustomersService {
               ],
               docs: [
                 { $skip: (currentPage - 1) * recordPerPage },
-                { $limit: recordPerPage }
+                { $limit: recordPerPage },
+                ...(filterOnBankInfo ? [] : bankInfoStages),
+                {
+                  $lookup: {
+                    from: "remarks",
+                    localField: "remarkid",
+                    foreignField: "_id",
+                    pipeline: [
+                      { $project: { _id: 1, remark: 1, } },
+                    ],
+                    as: "remarkInfos",
+                  },
+                },
+                { $unwind: { path: "$remarkInfos", preserveNullAndEmptyArrays: true }, },
+                {
+                  $lookup: {
+                    from: "users",
+                    localField: "createdBy",
+                    foreignField: "_id",
+                    pipeline: [
+                      { $project: { _id: 1, firstName: 1, lastName: 1, mobile: 1 } },
+                    ],
+                    as: "userInfo",
+                  },
+                },
+                {
+                  $lookup: {
+                    from: "users",
+                    localField: "userAssign.userid",
+                    foreignField: "_id",
+                    pipeline: [
+                      { $project: { _id: 1, firstName: 1, lastName: 1, mobile: 1 } },
+                    ],
+                    as: "reportingInfo",
+                  },
+                },
+                {
+                  $lookup: {
+                    from: "customers",
+                    localField: "parentid",
+                    foreignField: "_id",
+                    pipeline: [
+                      { $project: { _id: 1, firmName: 1, contactPerson: 1, mobile: 1 } },
+                    ],
+                    as: "parentInfo",
+                  },
+                },
+                { $unwind: { path: "$userInfo", preserveNullAndEmptyArrays: true }, },
+                { $unwind: { path: "$reportingInfo", preserveNullAndEmptyArrays: true }, },
+                {
+                  $project: {
+                    createdAt: { $dateToString: { format: "%Y-%m-%d %H:%M", date: "$createdAt" } },
+                    _id: 1,
+                    createdBy: {
+                      $concat: [
+                        { $ifNull: ["$userInfo.firstName", "Self"] },
+                        " ",
+                        { $ifNull: ["$userInfo.lastName", ""] }
+                      ]
+                    },
+
+                    assignUser: {
+                      $concat: [
+                        { $ifNull: ["$reportingInfo.firstName", ""] },
+                        " ",
+                        { $ifNull: ["$reportingInfo.lastName", ""] }
+                      ]
+                    },
+                    customerType: { $ifNull: ["$customerType", ""] },
+                    parentCustomer: {
+                      $ifNull: [
+                        { $arrayElemAt: ["$parentInfo.firmName", 0] },
+                        { $ifNull: [{ $arrayElemAt: ["$parentInfo.contactPerson", 0] }, { $ifNull: ["$parentName", ""] }] },
+                      ],
+                    },
+                    remark: { $ifNull: ["$remarkInfos.remark", ""] },
+                    remarkid: { $ifNull: ["$remarkInfos.id", ""] },
+                    firmName: { $ifNull: ["$firmName", ""] },
+                    contactPerson: { $ifNull: ["$contactPerson", ""] },
+                    refno: { $ifNull: ["$refno", 0] },
+                    address: { $ifNull: ["$address.address", ""] },
+                    postalCode: { $ifNull: ["$address.postalCode", ""] },
+                    city: { $ifNull: ["$address.city", ""] },
+                    state: { $ifNull: ["$address.state", ""] },
+                    mobile: { $ifNull: ["$mobile", null] },
+                    email: { $ifNull: ["$email", ""] },
+                    avatar: { $ifNull: ["$avatar", ""] },
+                    location: { $ifNull: ["$location", {}] },
+                    phone: { $ifNull: ["$phone", ""] },
+                    grade: { $ifNull: ["$grade", ""] },
+                    // flat, so the CRM Excel export gets plain columns
+                    mechanicCategory: { $ifNull: ["$loyaltyCategory.category", ""] },
+                    mechanicLevelCode: { $ifNull: ["$loyaltyCategory.levelCode", ""] },
+                    mechanicCategoryPoints: { $ifNull: ["$loyaltyCategory.points", ""] },
+                    mechanicCategoryPeriod: { $ifNull: ["$loyaltyCategory.period", ""] },
+                    status: { $ifNull: ["$status", ""] },
+                    active: { $ifNull: ["$active", false] },
+                    loginAt: { $ifNull: ["$loginAt", ""] },
+                    accountNo: { $ifNull: ["$bankInfos.bankInfo.accountNo", ""] },
+                    bankVee: { $ifNull: ["$bankInfos.bankInfo.verified", ""] },
+                    BankName: { $ifNull: ["$bankInfos.bankInfo.bankName", ""] },
+                    AccountHolderName: { $ifNull: ["$bankInfos.bankInfo.holderName", ""] },
+                    UPIId: { $ifNull: ["$bankInfos.upiInfo.upiNumber", ""] },
+                    AdharNumber: { $ifNull: ["$kycInfo.aadharNo", ""] },
+                    PanNo: { $ifNull: ["$kycInfo.panNo", ""] },
+                    IFSCCode: { $ifNull: ["$bankInfos.bankInfo.ifsc", ""] },
+                    kycInfo: { $ifNull: ["$kycInfo", {}] },
+                    verified: { $ifNull: ["$verified", {}] },
+                  },
+                },
               ]
             }
           }
