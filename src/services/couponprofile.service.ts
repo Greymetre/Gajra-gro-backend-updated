@@ -11,6 +11,8 @@ import { SearchRequestDto } from '../dto/pagination-dto';
 import { getAuthUserInfo } from '../common/utils/jwt.helper';
 import { CouponsController } from '../user/coupons/coupons.controller';
 import { PackingList, PackingListDocument } from '../entities/packing-list.entity';
+import { Loyaltyscheme, LoyaltyschemeDocument } from '../entities/loyaltyscheme.entity';
+import { buildPointsSnapshot, schemeDateFor } from '../common/utils/loyalty.helper';
 const ObjectId = require('mongoose').Types.ObjectId;
 @Injectable()
 export class CouponProfileService {
@@ -20,7 +22,25 @@ export class CouponProfileService {
     @InjectModel('Product') private readonly productModel: Model<ProductDocument>,
     @InjectModel('Transaction') private readonly transactionModel: Model<TransactionDocument>,
     @InjectModel('PackingList') private readonly packingListModel: Model<PackingListDocument>,
+    @InjectModel(Loyaltyscheme.name) private readonly schemeModel: Model<LoyaltyschemeDocument>,
   ) { }
+
+  // Freezes today's scheme points into every product line of a coupon batch, so its printed coupons keep them
+  private async savePointsSnapshot(profileId: any): Promise<void> {
+    const profile = await this.couponProfileModel.findById(profileId);
+    if (!profile || !profile.couponInfo?.length) return;
+    const schemeDate = schemeDateFor(new Date());
+    const schemes = await this.schemeModel.find({
+      startedAt: { $lte: schemeDate },
+      endedAt: { $gte: schemeDate },
+      active: true,
+    }).select('schemeName schemeDetail basedOn categoryPercentages').exec();
+    for (const info of profile.couponInfo) {
+      const product: any = await this.productModel.findById(info.productid).select('productDetail').exec();
+      info.pointsSnapshot = buildPointsSnapshot(schemes, info.productid, product?.productDetail?.[0]?.mrp);
+    }
+    await profile.save();
+  }
 
   public async createCoupon(createCouponDto: CreateCouponDto) {
     try {
@@ -38,6 +58,7 @@ export class CouponProfileService {
       if (!savedCouponProfile) {
         throw new BadRequestException('Error in Create Coupon Profile');
       }
+      await this.savePointsSnapshot(savedCouponProfile._id);
 
       // Generate codes
       const mappedArray = await Promise.all(
@@ -901,6 +922,7 @@ export class CouponProfileService {
           createdBy: coupon.createdBy,
           couponInfo: [{ couponCount: coupon.couponCount, productid: coupon.products }]
         });
+        await this.savePointsSnapshot(couponprofile._id);
 
         const couponlsArray = [];
         for (const couponls of coupon.couponsData) {
@@ -1024,6 +1046,7 @@ export class CouponProfileService {
         }
       }
 
+      await this.savePointsSnapshot(couponProfile._id);
       // Refetch profile to get couponInfo & updated customerType
       const profile = await this.couponProfileModel.findById(couponProfile._id);
 

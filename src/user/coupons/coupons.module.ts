@@ -8,6 +8,7 @@ import { CouponSchema } from '../../entities/coupon.entity';
 import { ProductSchema } from '../../entities/product.entity';
 import { MongooseModule } from '@nestjs/mongoose'
 import { PackingList, PackingListSchema } from '../../entities/packing-list.entity';
+import { Loyaltyscheme, LoyaltyschemeSchema } from '../../entities/loyaltyscheme.entity';
 @Module({
   imports: [MongooseModule.forFeature([
     { name: 'CouponProfile', schema: CouponProfileSchema },
@@ -15,6 +16,7 @@ import { PackingList, PackingListSchema } from '../../entities/packing-list.enti
     { name: 'Product', schema: ProductSchema },
     { name: 'Transaction', schema: TransactionSchema },
     { name: 'PackingList', schema: PackingListSchema },
+    { name: Loyaltyscheme.name, schema: LoyaltyschemeSchema },
   ])],
   controllers: [CouponsController],
   providers: [CouponProfileService]

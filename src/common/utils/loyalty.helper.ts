@@ -59,3 +59,37 @@ export function categoryBonusPoints(scheme: any, productid: any, mechanicCategor
   const extra = Number(row?.percentage || 0) - 100;
   return extra > 0 ? Math.round((basePoints * extra) / 100) : 0;
 }
+
+// Scheme start/end values are date-only fields stored at 00:00 UTC. Resolve a timestamp to its India
+// calendar date so an end date remains valid through 23:59:59 IST.
+export function schemeDateFor(date: Date): Date {
+  const indiaDate = new Date(date.getTime() + 330 * 60 * 1000);
+  return new Date(Date.UTC(indiaDate.getUTCFullYear(), indiaDate.getUTCMonth(), indiaDate.getUTCDate()));
+}
+
+/**
+ * Coupon points snapshot: when a coupon batch is printed, the points every active normal scheme gives for its
+ * product are frozen into the batch (couponInfo.pointsSnapshot). A coupon with a snapshot is paid exactly those
+ * points, whatever the schemes say at scan time (changed points, a replacing scheme, an ended scheme), so coupons
+ * already in the market keep their printed value. A coupon without one is paid by the current active schemes.
+ * Category schemes are not frozen; their bonus is added on top at scan time.
+ */
+export function buildPointsSnapshot(schemes: any[], productid: any, mrp: any): { schemeid: any; schemeName: string; points: number }[] {
+  const snapshot = [];
+  for (const scheme of schemes || []) {
+    if (isCategoryScheme(scheme)) continue;
+    const detail = (scheme.schemeDetail || []).find((d: any) =>
+      Array.isArray(d.products) && d.products.some((id: any) => String(id) === String(productid))
+    );
+    const value = Number(detail?.points || 0);
+    const points = scheme.basedOn === 'Percentage' ? Math.round((value / 100) * Number(mrp || 0)) : value;
+    if (points > 0) snapshot.push({ schemeid: scheme._id, schemeName: scheme.schemeName, points });
+  }
+  return snapshot;
+}
+
+// Frozen point rows of a coupon batch line, or null when the coupon must be paid by the current schemes
+export function frozenPointRows(couponInfo: any): { schemeid: any; schemeName: string; points: number }[] | null {
+  const rows = (couponInfo?.pointsSnapshot || []).filter((r: any) => Number(r?.points) > 0);
+  return rows.length ? rows.map((r: any) => ({ schemeid: r.schemeid, schemeName: r.schemeName, points: Number(r.points) })) : null;
+}

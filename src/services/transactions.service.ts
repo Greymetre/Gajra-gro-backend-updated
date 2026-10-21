@@ -13,7 +13,7 @@ import { GetTransactionInfoDto, GetAllTransactionDto } from '../user/transaction
 import { Request } from 'express';
 import { RemoveFilesHelper, PushNotification, listImagesByTimeWithVersions, uploadFolderToS3 } from "src/common/utils/helper.service";
 import { getAuthUserInfo, getCustomerAuthInfo } from '../common/utils/jwt.helper';
-import { categoryBonusPoints, dateFromFrequency, isCategoryScheme, schemeBasedOnScan } from 'src/common/utils/loyalty.helper';
+import { categoryBonusPoints, dateFromFrequency, isCategoryScheme, schemeBasedOnScan, schemeDateFor, frozenPointRows } from 'src/common/utils/loyalty.helper';
 import { PaginationRequestDto } from 'src/dto/pagination-dto';
 import { asyncScheduler } from 'rxjs';
 import { StatusCouponDto } from 'src/user/coupons/dto/request-coupon.dto';
@@ -883,10 +883,33 @@ export class TransactionsService {
     const validSchemes = customerSchemes.filter((scheme) => !isCategoryScheme(scheme));
     const categorySchemes = customerSchemes.filter((scheme) => isCategoryScheme(scheme));
 
+    // points frozen when the coupon was printed, only when it is entered against its own product
+    const [printedCoupon] = params.couponCode ? await this.getCouponsToScans([params.couponCode]) : [];
+    const printedInfo = String(printedCoupon?.couponInfo?.productid) === String(product._id) ? printedCoupon.couponInfo : null;
+    const frozenRows = frozenPointRows(printedInfo);
+
     let refno = await this.getNewRefNoTransaction();
     const transactions = [];
 
-    for (const scheme of validSchemes) {
+    for (const row of frozenRows || []) {
+      transactions.push({
+        coupon: params.couponCode,
+        productid: product._id,
+        customerid: ObjectId(customerInfo._id),
+        schemeid: row.schemeid,
+        points: row.points,
+        transactionType: 'Cr',
+        refno: refno++,
+        pointType: row.schemeName || 'Coupon Scan',
+        modifyByid: params.createdBy,
+        createdBy: params.createdBy,
+        createdAt: params.transactionDate || new Date(),
+        customerType: params.customer.customerType,
+      });
+    }
+
+    // a coupon with frozen points is not paid again by the current schemes
+    for (const scheme of frozenRows ? [] : validSchemes) {
       if (
         setting?.loyaltyscheme?.customerType_based &&
         !scheme.customerType.includes(customerInfo.customerType)
@@ -1020,11 +1043,28 @@ export class TransactionsService {
           const validSchemes = customerSchemes.filter((scheme) => !isCategoryScheme(scheme));
           const categorySchemes = customerSchemes.filter((scheme) => isCategoryScheme(scheme));
 
-          if (validSchemes.length === 0) {
+          // coupon printed with frozen points: pay exactly those, whatever the current schemes say
+          const frozenRows = frozenPointRows(couponDetailInfo);
+
+          if (!frozenRows && validSchemes.length === 0) {
             return { ...item, isError: true, errorMessage: 'NO_VALID_SCHEMES_FOUND' };
           }
 
-          const results = await Promise.all(
+          const results: any[] = frozenRows
+            ? frozenRows.map((row) => {
+              refno++;
+              return {
+                coupon: item.coupon,
+                productid: couponDetailInfo.productid,
+                customerid: ObjectId(customerInfo._id) ? ObjectId(customerInfo._id) : couponsScanDTO.customerid,
+                schemeid: row.schemeid,
+                points: row.points,
+                pointType: row.schemeName || "Coupon Scan",
+                transactionType: "Cr",
+                refno,
+              };
+            })
+            : await Promise.all(
             validSchemes.map(async (scheme) => {
               const matchedProducts = scheme.schemeDetail.find((obj) =>
                 obj.products.includes(couponDetailInfo.productid)
@@ -1447,16 +1487,7 @@ export class TransactionsService {
       throw new BadRequestException('Invalid scheme reference date');
     }
 
-    // Scheme start/end values are date-only fields stored at 00:00 UTC.
-    // Resolve the reference timestamp to its India calendar date so an end
-    // date remains valid through 23:59:59 IST for scans and damage entries.
-    const indiaOffsetInMilliseconds = 330 * 60 * 1000;
-    const indiaDate = new Date(date.getTime() + indiaOffsetInMilliseconds);
-    const schemeDate = new Date(Date.UTC(
-      indiaDate.getUTCFullYear(),
-      indiaDate.getUTCMonth(),
-      indiaDate.getUTCDate(),
-    ));
+    const schemeDate = schemeDateFor(date);
 
     return await this.schemeModel.find({
       startedAt: { $lte: schemeDate },
@@ -1815,10 +1846,16 @@ export class TransactionsService {
         else if (couponInfo.startDate > new Date() && (couponInfo.expiryDate < new Date() || threeYearsLater < new Date())) {
           return { ...transaction, isError: true, errorMessage: 'QRCODE_EXPIRE' }
         }
+        // coupon printed with frozen points: pay exactly those, whatever the current schemes say
+        else if (frozenPointRows(couponDetailInfo)) {
+          return frozenPointRows(couponDetailInfo).map((row) => {
+            refno = refno + 1
+            return { ...transaction, productid: couponDetailInfo.productid, customerid: ObjectId(customerInfo._id), schemeid: row.schemeid, points: row.points, pointType: "Coupon Scan", transactionType: "Cr", refno: refno }
+          })
+        }
         else {
           return await Promise.all(schemes.filter((scheme) => !isCategoryScheme(scheme)).map(async (scheme) => {
             const matchedProducts = await scheme.schemeDetail.find(obj => obj.products.includes(couponDetailInfo.productid));
-            console.log('match', matchedProducts);
 
             if (setting?.loyaltyscheme?.customerType_based && !scheme.customerType.includes(customerInfo.customerType)) {
               return { ...transaction, isError: true, errorMessage: 'PROGRAM_NOT_FOR_CUSTOMERTYPE' }
