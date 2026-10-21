@@ -14,6 +14,23 @@ import { PackingList, PackingListDocument } from '../entities/packing-list.entit
 import { Loyaltyscheme, LoyaltyschemeDocument } from '../entities/loyaltyscheme.entity';
 import { buildPointsSnapshot, schemeDateFor } from '../common/utils/loyalty.helper';
 const ObjectId = require('mongoose').Types.ObjectId;
+
+// Points a batch line pays a customer type: its frozen snapshot points when it has them (what a scan pays),
+// else the given fallback (product master points)
+const frozenPointsExpr = (customerType: string, fallback: any) => ({
+  $let: {
+    vars: {
+      rows: {
+        $filter: {
+          input: { $ifNull: ["$couponInfo.pointsSnapshot", []] },
+          as: "row",
+          cond: { $in: [customerType, { $ifNull: ["$$row.customerType", []] }] },
+        },
+      },
+    },
+    in: { $cond: [{ $gt: [{ $size: "$$rows" }, 0] }, { $sum: "$$rows.points" }, fallback] },
+  },
+});
 @Injectable()
 export class CouponProfileService {
   constructor(
@@ -342,7 +359,7 @@ export class CouponProfileService {
             productNo: { $ifNull: ["$productInfo.productNo", ''] },
             description: { $ifNull: ["$productInfo.description", ''] },
             model: { $ifNull: ["$productInfo.model", ''] },
-            points: { $ifNull: ["$productInfo.points", ''] },
+            points: frozenPointsExpr('Mechanic', { $ifNull: ["$productInfo.points", ''] }),
             mrp: { $first: "$productInfo.productDetail.mrp" },
             price: { $first: "$productInfo.productDetail.price" },
             partNo: { $first: "$productInfo.productDetail.partNo" },
@@ -356,14 +373,14 @@ export class CouponProfileService {
             coupons: { $ifNull: ["$couponInfo.couponCodeInfo", []] },
             createdAt: { $ifNull: ["$createdAt", ""] },
             active: { $ifNull: ["$active", false] },
-            rPoints: {
+            rPoints: frozenPointsExpr('Retailer', {
               $ifNull: [
                 {
                   $divide: ["$productInfo.points", 4]
                 },
                 ''
               ]
-            }
+            })
           },
         },
         { $sort: { createdAt: -1 } },
@@ -582,7 +599,7 @@ export class CouponProfileService {
             productNo: { $ifNull: ["$productInfo.productNo", ''] },
             description: { $ifNull: ["$productInfo.description", ''] },
             model: { $ifNull: ["$productInfo.model", ''] },
-            points: { $ifNull: ["$productInfo.points", ''] },
+            points: frozenPointsExpr('Mechanic', { $ifNull: ["$productInfo.points", ''] }),
             mrp: { $first: "$productInfo.productDetail.mrp" },
             price: { $first: "$productInfo.productDetail.price" },
             partNo: { $first: "$productInfo.productDetail.partNo" },
@@ -596,14 +613,14 @@ export class CouponProfileService {
             coupons: { $ifNull: ["$couponInfo.couponCodeInfo", []] },
             createdAt: { $ifNull: ["$createdAt", ""] },
             active: { $ifNull: ["$active", false] },
-            rPoints: {
+            rPoints: frozenPointsExpr('Retailer', {
               $ifNull: [
                 {
                   $divide: ["$productInfo.points", 4]
                 },
                 ''
               ]
-            }
+            })
           },
         },
       ]).exec()
