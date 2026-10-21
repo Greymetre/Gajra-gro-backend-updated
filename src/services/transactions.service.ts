@@ -13,7 +13,7 @@ import { GetTransactionInfoDto, GetAllTransactionDto } from '../user/transaction
 import { Request } from 'express';
 import { RemoveFilesHelper, PushNotification, listImagesByTimeWithVersions, uploadFolderToS3 } from "src/common/utils/helper.service";
 import { getAuthUserInfo, getCustomerAuthInfo } from '../common/utils/jwt.helper';
-import { categoryBonusPoints, dateFromFrequency, isCategoryScheme, schemeBasedOnScan, schemeDateFor, frozenPointRows } from 'src/common/utils/loyalty.helper';
+import { categoryBonusPoints, dateFromFrequency, isCategoryScheme, schemeBasedOnScan, schemeDateFor, frozenPointRows, isFrozenScheme } from 'src/common/utils/loyalty.helper';
 import { PaginationRequestDto } from 'src/dto/pagination-dto';
 import { asyncScheduler } from 'rxjs';
 import { StatusCouponDto } from 'src/user/coupons/dto/request-coupon.dto';
@@ -886,7 +886,7 @@ export class TransactionsService {
     // points frozen when the coupon was printed, only when it is entered against its own product
     const [printedCoupon] = params.couponCode ? await this.getCouponsToScans([params.couponCode]) : [];
     const printedInfo = String(printedCoupon?.couponInfo?.productid) === String(product._id) ? printedCoupon.couponInfo : null;
-    const frozenRows = frozenPointRows(printedInfo);
+    const frozenRows = frozenPointRows(printedInfo, customerInfo.customerType);
 
     let refno = await this.getNewRefNoTransaction();
     const transactions = [];
@@ -908,8 +908,8 @@ export class TransactionsService {
       });
     }
 
-    // a coupon with frozen points is not paid again by the current schemes
-    for (const scheme of frozenRows ? [] : validSchemes) {
+    // a coupon with frozen base points is not paid again by the current Regular schemes
+    for (const scheme of frozenRows ? validSchemes.filter((s) => !isFrozenScheme(s)) : validSchemes) {
       if (
         setting?.loyaltyscheme?.customerType_based &&
         !scheme.customerType.includes(customerInfo.customerType)
@@ -1043,15 +1043,16 @@ export class TransactionsService {
           const validSchemes = customerSchemes.filter((scheme) => !isCategoryScheme(scheme));
           const categorySchemes = customerSchemes.filter((scheme) => isCategoryScheme(scheme));
 
-          // coupon printed with frozen points: pay exactly those, whatever the current schemes say
-          const frozenRows = frozenPointRows(couponDetailInfo);
+          // coupon printed with frozen base points: pay those instead of the current Regular schemes
+          const frozenRows = frozenPointRows(couponDetailInfo, customerInfo.customerType);
+          const schemesToPay = frozenRows ? validSchemes.filter((scheme) => !isFrozenScheme(scheme)) : validSchemes;
 
           if (!frozenRows && validSchemes.length === 0) {
             return { ...item, isError: true, errorMessage: 'NO_VALID_SCHEMES_FOUND' };
           }
 
-          const results: any[] = frozenRows
-            ? frozenRows.map((row) => {
+          const results: any[] = [
+            ...(frozenRows || []).map((row) => {
               refno++;
               return {
                 coupon: item.coupon,
@@ -1063,9 +1064,9 @@ export class TransactionsService {
                 transactionType: "Cr",
                 refno,
               };
-            })
-            : await Promise.all(
-            validSchemes.map(async (scheme) => {
+            }),
+            ...await Promise.all(
+            schemesToPay.map(async (scheme) => {
               const matchedProducts = scheme.schemeDetail.find((obj) =>
                 obj.products.includes(couponDetailInfo.productid)
               );
@@ -1116,7 +1117,8 @@ export class TransactionsService {
                 refno,
               };
             })
-          );
+          ),
+          ];
 
           const credits: any[] = results.filter((r: any) => r.transactionType === 'Cr');
           const basePoints = credits.reduce((sum, r: any) => sum + (Number(r.points) || 0), 0);
@@ -1493,7 +1495,7 @@ export class TransactionsService {
       startedAt: { $lte: schemeDate },
       endedAt: { $gte: schemeDate },
       active: true,
-    }).select('schemeDetail schemeType schemeName customerType customers states cities basedOn frequency categoryPercentages').exec()
+    }).select('schemeDetail schemeType schemeTag schemeName customerType customers states cities basedOn frequency categoryPercentages').exec()
   };
 
   async getScanedCoupons(toscaned: any): Promise<any> {
@@ -1846,15 +1848,14 @@ export class TransactionsService {
         else if (couponInfo.startDate > new Date() && (couponInfo.expiryDate < new Date() || threeYearsLater < new Date())) {
           return { ...transaction, isError: true, errorMessage: 'QRCODE_EXPIRE' }
         }
-        // coupon printed with frozen points: pay exactly those, whatever the current schemes say
-        else if (frozenPointRows(couponDetailInfo)) {
-          return frozenPointRows(couponDetailInfo).map((row) => {
+        else {
+          // coupon printed with frozen base points: pay those instead of the current Regular schemes
+          const frozenRows = frozenPointRows(couponDetailInfo, customerInfo.customerType)
+          const frozenCredits = (frozenRows || []).map((row) => {
             refno = refno + 1
             return { ...transaction, productid: couponDetailInfo.productid, customerid: ObjectId(customerInfo._id), schemeid: row.schemeid, points: row.points, pointType: "Coupon Scan", transactionType: "Cr", refno: refno }
           })
-        }
-        else {
-          return await Promise.all(schemes.filter((scheme) => !isCategoryScheme(scheme)).map(async (scheme) => {
+          return [...frozenCredits, ...await Promise.all(schemes.filter((scheme) => !isCategoryScheme(scheme) && !(frozenRows && isFrozenScheme(scheme))).map(async (scheme) => {
             const matchedProducts = await scheme.schemeDetail.find(obj => obj.products.includes(couponDetailInfo.productid));
 
             if (setting?.loyaltyscheme?.customerType_based && !scheme.customerType.includes(customerInfo.customerType)) {
@@ -1881,7 +1882,7 @@ export class TransactionsService {
               refno = refno + 1
               return { ...transaction, productid: couponDetailInfo.productid, customerid: ObjectId(customerInfo._id), schemeid: scheme._id, points: points, pointType: "Coupon Scan", transactionType: "Cr", refno: refno }
             }
-          }))
+          }))]
         }
 
       })

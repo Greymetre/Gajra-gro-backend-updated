@@ -68,28 +68,35 @@ export function schemeDateFor(date: Date): Date {
 }
 
 /**
- * Coupon points snapshot: when a coupon batch is printed, the points every active normal scheme gives for its
- * product are frozen into the batch (couponInfo.pointsSnapshot). A coupon with a snapshot is paid exactly those
- * points, whatever the schemes say at scan time (changed points, a replacing scheme, an ended scheme), so coupons
- * already in the market keep their printed value. A coupon without one is paid by the current active schemes.
- * Category schemes are not frozen; their bonus is added on top at scan time.
+ * Coupon points snapshot: when a coupon batch is printed, the points every active Regular (base) scheme gives for
+ * its product are frozen into the batch (couponInfo.pointsSnapshot). A coupon with a snapshot is paid those base
+ * points instead of the current Regular schemes (changed points, a replacing scheme, an ended scheme), so coupons
+ * already in the market keep their printed value. Booster (promo) and category schemes are never frozen: they pay
+ * at scan time while active. A coupon without a snapshot is paid by all current active schemes.
  */
-export function buildPointsSnapshot(schemes: any[], productid: any, mrp: any): { schemeid: any; schemeName: string; points: number }[] {
+export function isFrozenScheme(scheme: any): boolean {
+  return scheme?.schemeTag === 'Regular' && !isCategoryScheme(scheme);
+}
+
+export function buildPointsSnapshot(schemes: any[], productid: any, mrp: any): { schemeid: any; schemeName: string; customerType: string[]; points: number }[] {
   const snapshot = [];
   for (const scheme of schemes || []) {
-    if (isCategoryScheme(scheme)) continue;
+    if (!isFrozenScheme(scheme)) continue;
     const detail = (scheme.schemeDetail || []).find((d: any) =>
       Array.isArray(d.products) && d.products.some((id: any) => String(id) === String(productid))
     );
     const value = Number(detail?.points || 0);
     const points = scheme.basedOn === 'Percentage' ? Math.round((value / 100) * Number(mrp || 0)) : value;
-    if (points > 0) snapshot.push({ schemeid: scheme._id, schemeName: scheme.schemeName, points });
+    if (points > 0) snapshot.push({ schemeid: scheme._id, schemeName: scheme.schemeName, customerType: scheme.customerType || [], points });
   }
   return snapshot;
 }
 
-// Frozen point rows of a coupon batch line, or null when the coupon must be paid by the current schemes
-export function frozenPointRows(couponInfo: any): { schemeid: any; schemeName: string; points: number }[] | null {
-  const rows = (couponInfo?.pointsSnapshot || []).filter((r: any) => Number(r?.points) > 0);
+// Frozen point rows of a coupon batch line for a customer type (each scheme only pays its own customer types),
+// or null when the coupon must be paid by the current schemes
+export function frozenPointRows(couponInfo: any, customerType: string): { schemeid: any; schemeName: string; points: number }[] | null {
+  const rows = (couponInfo?.pointsSnapshot || []).filter((r: any) =>
+    Number(r?.points) > 0 && (!Array.isArray(r.customerType) || r.customerType.includes(customerType))
+  );
   return rows.length ? rows.map((r: any) => ({ schemeid: r.schemeid, schemeName: r.schemeName, points: Number(r.points) })) : null;
 }

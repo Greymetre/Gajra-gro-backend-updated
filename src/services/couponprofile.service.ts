@@ -34,7 +34,7 @@ export class CouponProfileService {
       startedAt: { $lte: schemeDate },
       endedAt: { $gte: schemeDate },
       active: true,
-    }).select('schemeName schemeDetail basedOn categoryPercentages').exec();
+    }).select('schemeName schemeTag schemeDetail basedOn categoryPercentages customerType').exec();
     for (const info of profile.couponInfo) {
       const product: any = await this.productModel.findById(info.productid).select('productDetail').exec();
       info.pointsSnapshot = buildPointsSnapshot(schemes, info.productid, product?.productDetail?.[0]?.mrp);

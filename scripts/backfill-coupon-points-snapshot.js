@@ -1,7 +1,7 @@
 /*
  * One-time backfill: freeze the CURRENT scheme points into every coupon batch line (couponprofiles.couponInfo)
  * that has no pointsSnapshot yet, so coupons already in the market keep paying these points after a scheme
- * changes. Run it while the schemes still hold the old points (e.g. 500), then change the scheme (e.g. to 300).
+ * changes. Only Regular (base) schemes are frozen; Booster/promo schemes are not. Run it while the schemes still hold the old points (e.g. 500), then change the scheme (e.g. to 300).
  * Lines that already have a snapshot are never touched, so it is safe to run again.
  *
  * Usage (from the backend folder, with .env containing DB_URL):
@@ -21,17 +21,19 @@ function schemeDateFor(date) {
 }
 const isCategoryScheme = (scheme) =>
   scheme.basedOn === 'Percentage' && Array.isArray(scheme.categoryPercentages) && scheme.categoryPercentages.length > 0;
+// Only Regular (base) schemes are frozen; Booster/promo schemes keep paying at scan time while active
+const isFrozenScheme = (scheme) => scheme.schemeTag === 'Regular' && !isCategoryScheme(scheme);
 
 function buildPointsSnapshot(schemes, productid, mrp) {
   const snapshot = [];
   for (const scheme of schemes) {
-    if (isCategoryScheme(scheme)) continue;
+    if (!isFrozenScheme(scheme)) continue;
     const detail = (scheme.schemeDetail || []).find((d) =>
       Array.isArray(d.products) && d.products.some((id) => String(id) === String(productid))
     );
     const value = Number((detail && detail.points) || 0);
     const points = scheme.basedOn === 'Percentage' ? Math.round((value / 100) * Number(mrp || 0)) : value;
-    if (points > 0) snapshot.push({ schemeid: scheme._id, schemeName: scheme.schemeName, points });
+    if (points > 0) snapshot.push({ schemeid: scheme._id, schemeName: scheme.schemeName, customerType: scheme.customerType || [], points });
   }
   return snapshot;
 }
@@ -44,12 +46,15 @@ async function main() {
   const schemeDate = schemeDateFor(new Date());
   const schemes = await db.collection('loyaltyschemes')
     .find({ startedAt: { $lte: schemeDate }, endedAt: { $gte: schemeDate }, active: true })
-    .project({ schemeName: 1, schemeDetail: 1, basedOn: 1, categoryPercentages: 1 })
+    .project({ schemeName: 1, schemeTag: 1, schemeDetail: 1, basedOn: 1, categoryPercentages: 1, customerType: 1 })
     .toArray();
-  console.log(`Active schemes: ${schemes.map((s) => s.schemeName).join(', ') || '(none)'}`);
-  if (!schemes.length) {
+  console.log('Active schemes:');
+  for (const s of schemes) {
+    console.log(`  ${s.schemeName} | tag: ${s.schemeTag || '(none)'} | ${(s.customerType || []).join('/')} | ${isFrozenScheme(s) ? 'FREEZE' : 'not frozen'}`);
+  }
+  if (!schemes.some(isFrozenScheme)) {
     await client.close();
-    throw new Error('No active scheme today, nothing to freeze');
+    throw new Error('No active Regular scheme today, nothing to freeze (set schemeTag "Regular" on the base schemes)');
   }
 
   const mrpCache = new Map();
@@ -84,7 +89,7 @@ async function main() {
         },
       });
       if (!APPLY && lines <= 20) {
-        console.log(`  ${profile.profileName} / product ${info.productid}: ${JSON.stringify(snapshot.map((s) => s.points))}`);
+        console.log(`  ${profile.profileName} / product ${info.productid}: ${snapshot.map((s) => `${s.schemeName} [${s.customerType.join('/')}] = ${s.points}`).join(', ')}`);
       }
     }
   }

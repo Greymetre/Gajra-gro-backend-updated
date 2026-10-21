@@ -22,8 +22,8 @@ export class CouponInfo extends Document {
     packingList : string;
 
     // Scheme points frozen when the batch was printed; a scan pays only these, not the current schemes
-    @Prop({ type: [{ _id: false, schemeid: { type: SchemaTypes.ObjectId, ref: 'Loyaltyscheme' }, schemeName: String, points: Number }], default: undefined })
-    pointsSnapshot: { schemeid: Types.ObjectId; schemeName: string; points: number }[];
+    @Prop({ type: [{ _id: false, schemeid: { type: SchemaTypes.ObjectId, ref: 'Loyaltyscheme' }, schemeName: String, customerType: [String], points: Number }], default: undefined })
+    pointsSnapshot: { schemeid: Types.ObjectId; schemeName: string; customerType: string[]; points: number }[];
 
 }
 export const CouponInfoSchema = SchemaFactory.createForClass(CouponInfo);
