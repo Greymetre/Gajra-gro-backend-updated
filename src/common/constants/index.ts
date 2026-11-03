@@ -150,6 +150,7 @@ export enum PERMISSIONSETTING {
   //Reports Module Permission
   REPORT_READ = 'reports.read',
   REPORT_OTPREQUEST = 'reports.otprequest',
+  REPORT_CASHFREE = 'reports.cashfree',
   //Setting Module Permission
   SETTING_READ = 'setting.read',
   SETTING_UPDATE = 'setting.update',
