@@ -20,6 +20,10 @@ export class CashfreeStatement {
     // Row as uploaded, keyed by the Cashfree column headings
     @Prop({ type: Object, default: {} })
     row: Record<string, any>;
+
+    // CRM user who last imported this row
+    @Prop({ type: String, default: '' })
+    importedBy: string;
 }
 
 export const CashfreeStatementSchema = SchemaFactory.createForClass(CashfreeStatement);

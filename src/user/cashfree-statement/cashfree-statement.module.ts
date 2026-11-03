@@ -5,6 +5,7 @@ import { CashfreeStatementService } from '../../services/cashfree-statement.serv
 import { CashfreeStatement, CashfreeStatementSchema } from '../../entities/cashfree-statement.entity';
 import { SettingService } from '../../services/setting.service';
 import { SettingProject, SettingProjectSchema } from '../../entities/setting.project.entity';
+import { Redemption, RedemptionSchema } from '../../entities/redemption.entity';
 import { LoginMiddleware } from 'src/common/middleware/login.middleware';
 
 @Module({
@@ -12,6 +13,7 @@ import { LoginMiddleware } from 'src/common/middleware/login.middleware';
         MongooseModule.forFeature([
             { name: CashfreeStatement.name, schema: CashfreeStatementSchema },
             { name: SettingProject.name, schema: SettingProjectSchema },
+            { name: Redemption.name, schema: RedemptionSchema },
         ]),
     ],
     controllers: [CashfreeStatementController],
