@@ -19,6 +19,7 @@ import { StatesModule } from './states/states.module';
 import { CouponsModule } from './coupons/coupons.module';
 import { AuthModule } from './auth/auth.module';
 import { PackingListModule } from './packing-list/packing-list.module';
+import { CashfreeStatementModule } from './cashfree-statement/cashfree-statement.module';
 import { CategoryModule } from './category/category.module';
 import { SubcategoryModule } from './subcategory/subcategory.module';
 import { CountryModule } from './country/country.module';
@@ -34,7 +35,7 @@ import { S3Module } from '../s3/s3.module';
 
 @Module({
   //imports: [MongooseModule.forRoot('mongodb://FieldKonnectUsr:BridgeIT2022@localhost:27017/FieldKonnectDb'), UsersModule, CustomersModule, AttendancesModule, ExpensesModule, ProductsModule, BeatsModule, BeatschedulesModule, CustomervisitModule, NotificationsModule, ActivitiesModule, ShoppingcartModule, OrdersModule, LoyaltyschemeModule, TransactionsModule, SalesModule, SurveyquestionsModule, StatesModule, CouponsModule, AuthModule, CategoryModule, SubcategoryModule, CountryModule, CityModule, AddressModule],
-  imports: [UsersModule, S3Module, CustomersModule, AttendancesModule, ExpensesModule, ProductsModule, BeatsModule, BeatschedulesModule, CustomervisitModule, NotificationsModule, ActivitiesModule, ShoppingcartModule, OrdersModule, LoyaltyschemeModule, TransactionsModule, SalesModule, SurveyquestionsModule, StatesModule, CouponsModule, AuthModule, CategoryModule, SubcategoryModule, CountryModule, CityModule, DistrictModule, GiftModule, RedemptionModule, SettingModule, AddressModule, DashboardModule, CallCenterModule, PackingListModule],
+  imports: [UsersModule, S3Module, CustomersModule, AttendancesModule, ExpensesModule, ProductsModule, BeatsModule, BeatschedulesModule, CustomervisitModule, NotificationsModule, ActivitiesModule, ShoppingcartModule, OrdersModule, LoyaltyschemeModule, TransactionsModule, SalesModule, SurveyquestionsModule, StatesModule, CouponsModule, AuthModule, CategoryModule, SubcategoryModule, CountryModule, CityModule, DistrictModule, GiftModule, RedemptionModule, SettingModule, AddressModule, DashboardModule, CallCenterModule, PackingListModule, CashfreeStatementModule],
   controllers: [],
   providers: [],
 })
