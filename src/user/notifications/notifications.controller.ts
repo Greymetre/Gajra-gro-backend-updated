@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Header, HttpCode, Post, Query, Req, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Header, HttpCode, Param, Post, Query, Req, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express/multer';
 import { diskStorage } from 'multer';
@@ -79,5 +79,13 @@ export class NotificationsController {
   async history(@Req() req: Request, @Query('page') page = 1, @Query('limit') limit = 20) {
     await this.assertAccess(req, PERMISSIONSETTING.NEWS_READ);
     return { data: await this.notificationsService.getHistory(page, limit) };
+  }
+
+  @ApiOperation({ summary: 'Delete a sent news (removed from News History and from the app list)' })
+  @Delete(':id')
+  @HttpCode(200)
+  async remove(@Req() req: Request, @Param('id') id: string) {
+    const userId = await this.assertAccess(req, PERMISSIONSETTING.NEWS_DELETE);
+    return this.notificationsService.deleteNews(id, userId);
   }
 }

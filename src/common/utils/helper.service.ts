@@ -183,7 +183,8 @@ export const PushNewsNotification = async (
   const message: admin.messaging.Message = {
     token: deviceToken,
     notification: { title, body, ...(imageUrl ? { imageUrl } : {}) },
-    data: { customKey: 'Notification', type: 'news', title, body, ...(imageUrl ? { image: imageUrl } : {}) },
+    // customKey is the app screen opened on tap (Gro app: Notifications list)
+    data: { customKey: 'Notifications', type: 'news', title, body, ...(imageUrl ? { image: imageUrl } : {}) },
     ...(imageUrl ? {
       android: { notification: { imageUrl } },
       apns: { payload: { aps: { 'mutable-content': 1 } }, fcmOptions: { imageUrl } },

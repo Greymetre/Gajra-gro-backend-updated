@@ -216,6 +216,7 @@ export class NotificationsService {
     const perPage = Math.min(100, Math.max(1, Number(limit) || 20));
     const [docs, totalDocs] = await Promise.all([
       this.notificationModel.aggregate([
+        { $match: { active: { $ne: false } } },
         { $sort: { createdAt: -1 } },
         { $skip: (currentPage - 1) * perPage },
         { $limit: perPage },
@@ -234,19 +235,35 @@ export class NotificationsService {
           },
         },
       ]),
-      this.notificationModel.countDocuments({}),
+      this.notificationModel.countDocuments({ active: { $ne: false } }),
     ]);
     return { docs, totalDocs, page: currentPage, limit: perPage, totalPages: Math.ceil(totalDocs / perPage) };
   }
 
+  // Soft delete: hidden from News History and from every customer's app list. The image stays in storage.
+  async deleteNews(newsId: string, deletedBy: string) {
+    const id = toObjectId(newsId, 'notification');
+    if (!id) throw new BadRequestException('Notification id is required');
+    const result = await this.notificationModel.updateOne(
+      { _id: id, active: { $ne: false } },
+      { $set: { active: false, deletedAt: new Date(), deletedBy: toObjectId(deletedBy, 'user') } },
+    );
+    if (!result.matchedCount) throw new NotFoundException('News not found or already deleted');
+    return { data: { _id: id }, message: 'News deleted successfully' };
+  }
+
   // ---- Customer app (loyalty) ----
 
-  async getCustomerNews(customerId: string, page = 1, limit = 20) {
+  // read: true = only seen, false = only unseen, undefined = all
+  async getCustomerNews(customerId: string, page = 1, limit = 20, read?: boolean) {
     const id = toObjectId(customerId, 'customer');
     if (!id) throw new BadRequestException('Login required');
     const currentPage = Math.max(1, Number(page) || 1);
     const perPage = Math.min(100, Math.max(1, Number(limit) || 20));
-    const match = { active: true, users: { $elemMatch: { userid: id, isDeleted: { $ne: true } } } };
+    const mine: any = { userid: id, isDeleted: { $ne: true } };
+    if (read === true) mine.seen = true;
+    if (read === false) mine.seen = { $ne: true };
+    const match = { active: true, users: { $elemMatch: mine } };
     const [docs, totalDocs, unseenCount] = await Promise.all([
       this.notificationModel.aggregate([
         { $match: match },
@@ -270,7 +287,7 @@ export class NotificationsService {
   async markCustomerNewsSeen(customerId: string, newsId?: string) {
     const id = toObjectId(customerId, 'customer');
     if (!id) throw new BadRequestException('Login required');
-    const filter: any = { users: { $elemMatch: { userid: id, seen: false } } };
+    const filter: any = { active: true, users: { $elemMatch: { userid: id, seen: false } } };
     if (newsId) filter._id = toObjectId(newsId, 'notification');
     const result = await this.notificationModel.updateMany(
       filter,

@@ -15,9 +15,11 @@ export class NotificationsController {
   @ApiOperation({ summary: 'News for the logged-in customer, newest first (with unseenCount)' })
   @Get()
   @Header('Cache-Control', 'no-store')
-  async list(@Req() req: Request, @Query('page') page = 1, @Query('limit') limit = 20) {
+  async list(@Req() req: Request, @Query('page') page = 1, @Query('limit') limit = 20, @Query('read') read?: string) {
     const authInfo = await getCustomerAuthInfo(req.headers);
-    return { data: await this.notificationsService.getCustomerNews(authInfo?._id, page, limit) };
+    // read=1 -> read only, read=0 -> unread only, missing -> all
+    const readFilter = read === '1' || read === 'true' ? true : read === '0' || read === 'false' ? false : undefined;
+    return { data: await this.notificationsService.getCustomerNews(authInfo?._id, page, limit, readFilter) };
   }
 
   @ApiOperation({ summary: 'Mark all news as seen for the logged-in customer' })

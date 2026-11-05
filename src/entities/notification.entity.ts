@@ -54,6 +54,13 @@ export class Notification {
 
     @Prop({ type: Boolean , default: true })
     active: Boolean;
+
+    // Set when the news is deleted from CRM News History (soft delete)
+    @Prop({ type: Date })
+    deletedAt?: Date;
+
+    @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+    deletedBy?: Types.ObjectId;
 }
 
 export const NotificationSchema = SchemaFactory.createForClass(Notification);

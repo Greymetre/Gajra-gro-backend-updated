@@ -173,6 +173,7 @@ export enum PERMISSIONSETTING {
   //News Management (push news to customers)
   NEWS_READ = 'news.read',
   NEWS_SEND = 'news.send',
+  NEWS_DELETE = 'news.delete',
 }
 
 
