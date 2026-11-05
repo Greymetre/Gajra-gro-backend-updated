@@ -170,6 +170,9 @@ export enum PERMISSIONSETTING {
   CALLSUMMARY_DELETE = "callsummary.delete",
   CALLSUMMARY_EXPORT = "callsummary.export",
   CALLSUMMARY_IMPORT = "callsummary.import",
+  //News Management (push news to customers)
+  NEWS_READ = 'news.read',
+  NEWS_SEND = 'news.send',
 }
 
 

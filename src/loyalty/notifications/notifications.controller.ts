@@ -1,34 +1,38 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
-import { NotificationsService } from './notifications.service';
-import { CreateNotificationDto } from './dto/create-notification.dto';
-import { UpdateNotificationDto } from './dto/update-notification.dto';
+import { Controller, Get, Header, HttpCode, Param, Post, Query, Req, UseInterceptors } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Request } from 'express';
+import { TransformInterceptor } from 'src/common/dispatchers/transform.interceptor';
+import { getCustomerAuthInfo } from 'src/common/utils/jwt.helper';
+import { NotificationsService } from '../../services/notifications.service';
 
+// Mobile app notification screen: news sent from CRM News Management to the logged-in customer.
+@ApiTags('Loyalty Notifications')
 @Controller('loyalty/notification')
+@UseInterceptors(TransformInterceptor)
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(private readonly notificationsService: NotificationsService) { }
 
-  @Post()
-  create(@Body() createNotificationDto: CreateNotificationDto) {
-    return this.notificationsService.create(createNotificationDto);
-  };
-
+  @ApiOperation({ summary: 'News for the logged-in customer, newest first (with unseenCount)' })
   @Get()
-  findAll() {
-    return this.notificationsService.findAll();
-  };
+  @Header('Cache-Control', 'no-store')
+  async list(@Req() req: Request, @Query('page') page = 1, @Query('limit') limit = 20) {
+    const authInfo = await getCustomerAuthInfo(req.headers);
+    return { data: await this.notificationsService.getCustomerNews(authInfo?._id, page, limit) };
+  }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.notificationsService.findOne(+id);
-  };
+  @ApiOperation({ summary: 'Mark all news as seen for the logged-in customer' })
+  @Post('seen')
+  @HttpCode(200)
+  async markAllSeen(@Req() req: Request) {
+    const authInfo = await getCustomerAuthInfo(req.headers);
+    return { data: await this.notificationsService.markCustomerNewsSeen(authInfo?._id) };
+  }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateNotificationDto: UpdateNotificationDto) {
-    return this.notificationsService.update(+id, updateNotificationDto);
-  };
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.notificationsService.remove(+id);
-  };
+  @ApiOperation({ summary: 'Mark one news item as seen for the logged-in customer' })
+  @Post(':id/seen')
+  @HttpCode(200)
+  async markSeen(@Req() req: Request, @Param('id') id: string) {
+    const authInfo = await getCustomerAuthInfo(req.headers);
+    return { data: await this.notificationsService.markCustomerNewsSeen(authInfo?._id, id) };
+  }
 }

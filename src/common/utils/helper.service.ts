@@ -172,6 +172,32 @@ export const PushNotification = async (
   }
 };
 
+// News Management push: optional image, returns true only when FCM accepted the message.
+export const PushNewsNotification = async (
+  deviceToken: string,
+  title: string,
+  body: string,
+  imageUrl?: string,
+): Promise<boolean> => {
+  if (!deviceToken || deviceToken === 'undefined' || deviceToken === 'null') return false;
+  const message: admin.messaging.Message = {
+    token: deviceToken,
+    notification: { title, body, ...(imageUrl ? { imageUrl } : {}) },
+    data: { customKey: 'Notification', type: 'news', title, body, ...(imageUrl ? { image: imageUrl } : {}) },
+    ...(imageUrl ? {
+      android: { notification: { imageUrl } },
+      apns: { payload: { aps: { 'mutable-content': 1 } }, fcmOptions: { imageUrl } },
+    } : {}),
+  };
+  try {
+    await admin.messaging().send(message);
+    return true;
+  } catch (error) {
+    console.error('Error sending news notification:', error?.code || error?.message || error);
+    return false;
+  }
+};
+
 
 
 
