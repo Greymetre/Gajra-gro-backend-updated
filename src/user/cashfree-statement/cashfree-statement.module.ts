@@ -1,6 +1,7 @@
 import { Module, MiddlewareConsumer } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { CashfreeStatementController } from './cashfree-statement.controller';
+import { CashfreeWebhookController } from './cashfree-webhook.controller';
 import { CashfreeStatementService } from '../../services/cashfree-statement.service';
 import { CashfreeStatement, CashfreeStatementSchema } from '../../entities/cashfree-statement.entity';
 import { SettingService } from '../../services/setting.service';
@@ -16,7 +17,7 @@ import { LoginMiddleware } from 'src/common/middleware/login.middleware';
             { name: Redemption.name, schema: RedemptionSchema },
         ]),
     ],
-    controllers: [CashfreeStatementController],
+    controllers: [CashfreeStatementController, CashfreeWebhookController],
     providers: [CashfreeStatementService, SettingService],
 })
 export class CashfreeStatementModule {

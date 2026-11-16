@@ -1,4 +1,5 @@
 import axios from 'axios';
+import * as crypto from 'crypto';
 
 // Single place for every Cashfree Payout call used by redemptions.
 // Nothing here logs request/response bodies or axios errors: those carry bank details
@@ -69,6 +70,8 @@ export interface TransferStatusResult {
     addedOn: string;
     fundSource: string;
     description: string;
+    // full Cashfree transfer object, used to keep the Cashfree transfer report in sync
+    raw?: any;
 }
 
 // Returns found=false only when Cashfree says the transfer does not exist; throws on other errors
@@ -86,6 +89,7 @@ export const getCashfreeTransferStatus = async (transferId: string): Promise<Tra
             addedOn: data?.added_on || '',
             fundSource: data?.fundsource_id || '',
             description: data?.status_description || data?.message || '',
+            raw: data,
         };
     } catch (error) {
         if (error?.response?.status === 404) {
@@ -152,4 +156,52 @@ export const deleteCashfreeBeneficiary = async (beneficiaryId: string): Promise<
     } catch (error) {
         console.error('Cashfree delete beneficiary failed:', cashfreeErrorMessage(error));
     }
+};
+
+// Cashfree takes "yyyy-mm-dd hh:mm:ss" in IST for the account statement range
+const istDateTime = (date: Date): string => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }).formatToParts(date).reduce((acc, part) => ({ ...acc, [part.type]: part.value }), {} as Record<string, string>);
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}:${parts.second}`;
+};
+
+// All account statement rows (credits and debits of the Payouts account) between start and end, every page
+export const fetchCashfreeAccountStatement = async (start: Date, end: Date): Promise<any[]> => {
+    const token = await getV1Token();
+    if (!token) throw new Error('Unable to authorize with Cashfree');
+    const rows: any[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 1000; page++) {
+        let data: any;
+        try {
+            ({ data } = await axios.get(`${CASHFREE_PAYOUT_V1_URL}/accountStatement`, {
+                params: { startTime: istDateTime(start), endTime: istDateTime(end), limit: 100, ...(cursor ? { cursor } : {}) },
+                headers: { Authorization: `Bearer ${token}` },
+                timeout: REQUEST_TIMEOUT_MS,
+            }));
+        } catch (error) {
+            throw new Error(`Cashfree account statement failed: ${cashfreeErrorMessage(error)}`);
+        }
+        if (data?.status !== 'SUCCESS') {
+            throw new Error(`Cashfree account statement failed: ${data?.subCode || ''} ${data?.message || ''}`.trim());
+        }
+        rows.push(...(Array.isArray(data?.data?.batches) ? data.data.batches : []));
+        const next = data?.data?.nextCursor;
+        if (!data?.data?.hasNext || !next || next === cursor) break;
+        cursor = next;
+    }
+    return rows;
+};
+
+// Payout webhook V2: base64(HMAC-SHA256(timestamp + raw body, client secret)) must equal x-webhook-signature
+export const verifyCashfreeWebhookSignature = (rawBody: Buffer | undefined, signature: any, timestamp: any): boolean => {
+    const secret = process.env.CASHFREE_CLIENT_SECRET;
+    if (!rawBody || !signature || !timestamp || !secret) return false;
+    const expected = Buffer.from(
+        crypto.createHmac('sha256', secret).update(String(timestamp) + rawBody.toString('utf8')).digest('base64'),
+    );
+    const received = Buffer.from(String(signature));
+    return expected.length === received.length && crypto.timingSafeEqual(expected, received);
 };

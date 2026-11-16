@@ -67,6 +67,17 @@ export class CronService {
     }
   }
 
+  // Cashfree account statement into the Cashfree Report
+  @Cron('*/30 * * * *')
+  async cronJobForCashfreeAccountStatement() {
+    if (process.env.ENABLE_CRON_JOBS === 'false') return;
+    try {
+      await this.cronHelper.syncCashfreeAccountStatement();
+    } catch (error) {
+      console.error('Error in the Cashfree account statement cron:', error?.message);
+    }
+  }
+
   // Cashfree payouts marked Success can be reversed by the bank later
   @Cron('15 * * * *')
   async cronJobForCashfreeReversals() {

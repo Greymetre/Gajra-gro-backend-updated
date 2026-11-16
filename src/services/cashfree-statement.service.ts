@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { CASHFREE_STATEMENT_TYPE, CashfreeStatement, CashfreeStatementDocument } from '../entities/cashfree-statement.entity';
 import { Redemption, RedemptionDocument } from '../entities/redemption.entity';
+import { syncAccountStatementFromCashfree } from '../common/utils/cashfree-sync';
 
 const MAX_ROWS_PER_REQUEST = 5000;
 const MAX_CELL_LENGTH = 500;
@@ -223,6 +224,19 @@ export class CashfreeStatementService {
         } catch (error) {
             this.logger.error(`Cashfree report export failed: ${error?.message}`);
             throw new InternalServerErrorException('Error building cashfree report');
+        }
+    }
+
+    // CRM "Sync from Cashfree": pulls up to 31 days of the account statement through the Cashfree API
+    async syncAccountStatement(days: any, userId?: string) {
+        const range = Math.min(Math.max(Math.floor(Number(days)) || 31, 1), 31);
+        try {
+            const result = await syncAccountStatementFromCashfree(this.cashfreeStatementModel, range, `cashfree-api:${userId || ''}`);
+            this.logger.log(`Cashfree account statement synced by user ${userId}: ${result.fetched} rows`);
+            return { message: 'Account statement synced', data: { days: range, ...result } };
+        } catch (error) {
+            this.logger.error(`Cashfree account statement sync failed: ${error?.message}`);
+            throw new InternalServerErrorException('Unable to sync from Cashfree. Please try again later.');
         }
     }
 }

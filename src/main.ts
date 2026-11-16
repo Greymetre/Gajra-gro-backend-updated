@@ -83,7 +83,13 @@ async function bootstrap() {
   }
   const logger = new Logger('bootstrap');
   app.use(compression());
-  app.use(bodyParser.json({ limit: '50mb' }));
+  app.use(bodyParser.json({
+    limit: '50mb',
+    // Cashfree webhook signatures are computed over the exact raw body
+    verify: (req: any, _res, buf: Buffer) => {
+      if (req.originalUrl?.startsWith('/api/cashfree/')) req.rawBody = buf;
+    },
+  }));
   app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
   app.setGlobalPrefix('api');
   swagger(app);

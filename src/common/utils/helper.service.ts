@@ -15,6 +15,8 @@ import { Model } from "mongoose";
 import { v4 as uuid } from 'uuid';
 import axios from "axios";
 import { getCashfreeTransferStatus } from "./cashfree-payout";
+import { syncAccountStatementFromCashfree, transferRowFromApi, upsertStatementRows } from "./cashfree-sync";
+import { CASHFREE_STATEMENT_TYPE, CashfreeStatement, CashfreeStatementDocument } from '../../entities/cashfree-statement.entity';
 import { sfaRequestConfig, sfaUrl } from './sfa-client';
 import { syncCustomersFromSfa } from './sfa-customer-sync';
 import { syncAllProductPricesToSfa } from './sfa-product-sync';
@@ -217,6 +219,7 @@ export class CronHelper {
     @InjectModel(State.name) private stateModel: Model<StateDocument>,
     @InjectModel(District.name) private districtModel: Model<DistrictDocument>,
     @InjectModel(City.name) private cityModel: Model<CityDocument>,
+    @InjectModel(CashfreeStatement.name) private cashfreeStatementModel: Model<CashfreeStatementDocument>,
   ) { }
 
   async cronFunction() {
@@ -472,6 +475,22 @@ export class CronHelper {
     }
   }
 
+  // Keeps the Cashfree Report's transfer list in step with what the status checks see
+  private async saveTransferToReport(redemption: any, transferData: any) {
+    try {
+      const name = redemption?.payment?.holderName || redemption?.payment?.upiHolderName || '';
+      await upsertStatementRows(this.cashfreeStatementModel, CASHFREE_STATEMENT_TYPE.TRANSFER, [transferRowFromApi(transferData, name)], 'cashfree-api');
+    } catch (error) {
+      console.error(`Cashfree report save for redemption ${redemption?._id} failed: ${error?.message}`);
+    }
+  }
+
+  // Every 30 minutes: last 2 days of the Cashfree account statement into the Cashfree Report
+  public async syncCashfreeAccountStatement() {
+    const result = await syncAccountStatementFromCashfree(this.cashfreeStatementModel, 2, 'cashfree-api');
+    console.log(`Cashfree account statement sync: fetched ${result.fetched}, new ${result.inserted}, updated ${result.updated}`);
+  }
+
   // Every minute: settle redemptions whose Cashfree transfer is in process
   public async checkCashfreeOrderStatus() {
     if (this.cashfreeCheckRunning) return;
@@ -489,6 +508,7 @@ export class CronHelper {
             }
             continue;
           }
+          await this.saveTransferToReport(redemption, transfer.raw);
           if (transfer.status === "SUCCESS") {
             const updated = await this.redemptionModel.findOneAndUpdate(
               { _id: redemption._id, status: "UNDER PROCESS" },
@@ -521,6 +541,7 @@ export class CronHelper {
       try {
         const transfer = await getCashfreeTransferStatus(String(redemption._id));
         if (transfer.found && transfer.status === "REVERSED") {
+          await this.saveTransferToReport(redemption, transfer.raw);
           await this.rejectCashfreeRedemption(redemption, transfer.description || "Reversed by bank");
         }
       } catch (error) {
