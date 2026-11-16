@@ -195,9 +195,11 @@ export const fetchCashfreeAccountStatement = async (start: Date, end: Date): Pro
     return rows;
 };
 
-// Payout webhook V2: base64(HMAC-SHA256(timestamp + raw body, client secret)) must equal x-webhook-signature
+// Payout webhook V2: base64(HMAC-SHA256(timestamp + raw body, client secret)) must equal x-webhook-signature.
+// Cashfree signs with the oldest active client secret; if that differs from CASHFREE_CLIENT_SECRET,
+// put it in CASHFREE_WEBHOOK_SECRET.
 export const verifyCashfreeWebhookSignature = (rawBody: Buffer | undefined, signature: any, timestamp: any): boolean => {
-    const secret = process.env.CASHFREE_CLIENT_SECRET;
+    const secret = process.env.CASHFREE_WEBHOOK_SECRET || process.env.CASHFREE_CLIENT_SECRET;
     if (!rawBody || !signature || !timestamp || !secret) return false;
     const expected = Buffer.from(
         crypto.createHmac('sha256', secret).update(String(timestamp) + rawBody.toString('utf8')).digest('base64'),

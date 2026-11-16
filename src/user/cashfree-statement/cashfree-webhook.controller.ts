@@ -1,4 +1,4 @@
-import { Controller, Headers, HttpCode, Logger, Post, Req, UnauthorizedException } from '@nestjs/common';
+import { Controller, Headers, HttpCode, Logger, Post, Req } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { InjectModel } from '@nestjs/mongoose';
 import { Request } from 'express';
@@ -8,7 +8,7 @@ import { Redemption, RedemptionDocument } from '../../entities/redemption.entity
 import { verifyCashfreeWebhookSignature } from '../../common/utils/cashfree-payout';
 import { transferRowFromApi, upsertStatementRows } from '../../common/utils/cashfree-sync';
 
-// Cashfree Payouts webhook V2. Public (Cashfree calls it), so every request must carry a valid signature.
+// Cashfree Payouts webhook V2. Public (Cashfree calls it), so only requests with a valid signature are used.
 // It only records transfers in the Cashfree Report; redemption status is settled by the status cron,
 // which asks Cashfree directly and so never trusts a webhook body for money decisions.
 @ApiExcludeController()
@@ -30,7 +30,14 @@ export class CashfreeWebhookController {
     ) {
         const rawBody: Buffer | undefined = (req as any).rawBody;
         if (!verifyCashfreeWebhookSignature(rawBody, signature, timestamp)) {
-            throw new UnauthorizedException('Invalid signature');
+            // Nothing from an unverified request is used. It still gets 200: Cashfree's "Test & Add" check
+            // and repeated failures (which disable the webhook) both need a 2xx. The log line says why.
+            this.logger.warn(
+                `Cashfree webhook ignored, signature not verified: signature header ${signature ? 'present' : 'missing'}, ` +
+                `timestamp header ${timestamp ? 'present' : 'missing'}, content-type ${req.headers['content-type'] || '-'}, ` +
+                `raw body ${rawBody ? `${rawBody.length} bytes` : 'missing'}, event ${this.eventType(rawBody)}`,
+            );
+            return { received: false };
         }
 
         // Answer 200 even if saving fails: Cashfree disables the webhook after repeated failures,
@@ -50,6 +57,16 @@ export class CashfreeWebhookController {
         } catch (error) {
             this.logger.error(`Cashfree webhook processing failed: ${error?.message}`);
         }
+        this.logger.log(`Cashfree webhook verified: ${this.eventType(rawBody)}`);
         return { received: true };
+    }
+
+    // event type only, for logs (no customer data)
+    private eventType(rawBody?: Buffer): string {
+        try {
+            return String(JSON.parse(rawBody?.toString('utf8') || '{}')?.type || '-').slice(0, 50);
+        } catch {
+            return 'unparsable';
+        }
     }
 }
