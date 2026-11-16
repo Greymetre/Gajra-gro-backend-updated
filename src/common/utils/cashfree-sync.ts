@@ -11,6 +11,33 @@ const UNIQUE_COLUMN: Record<CASHFREE_STATEMENT_TYPE, string> = {
 };
 
 const text = (value: any): string => (value === undefined || value === null ? '' : String(value).trim().slice(0, 500));
+// "2026-11-16 18:23:40" (API) -> "2026-11-16T18:23:40", the dashboard export's format
+const isoTime = (value: any): string => text(value).replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/, '$1T$2');
+
+// Cashfree dashboard export names -> the API's event names
+const PARTICULARS: Record<string, string> = {
+    'CASHFREE TRANSFER': 'PAYOUT_TRANSFER',
+    'PAYOUT TRANSFER': 'PAYOUT_TRANSFER',
+    'ACCOUNT CREDIT': 'BANK_TRANSFER',
+    'BANK TRANSFER': 'BANK_TRANSFER',
+};
+const normaliseParticulars = (value: string): string => {
+    const key = value.toUpperCase().replace(/_/g, ' ').trim();
+    return PARTICULARS[key] || key.replace(/\s+/g, '_');
+};
+
+// "Debit/Credit" is DEBIT or CREDIT, "Particulars" PAYOUT_TRANSFER / BANK_TRANSFER, as in the dashboard export.
+// The API puts DEBIT/CREDIT in `event` and the category ("CASHFREE TRANSFER", "ACCOUNT CREDIT") in `eventType`;
+// whichever field holds DEBIT/CREDIT is used, so a swap on Cashfree's side cannot mix them up again.
+export const splitDebitCredit = (first: any, second: any): { debitCredit: string; particulars: string } => {
+    const a = text(first).toUpperCase();
+    const b = text(second).toUpperCase();
+    const isDc = (v: string) => v === 'DEBIT' || v === 'CREDIT';
+    if (isDc(a)) return { debitCredit: a, particulars: normaliseParticulars(b) };
+    if (isDc(b)) return { debitCredit: b, particulars: normaliseParticulars(a) };
+    const particulars = normaliseParticulars(a || b);
+    return { debitCredit: particulars === 'BANK_TRANSFER' ? 'CREDIT' : particulars === 'PAYOUT_TRANSFER' ? 'DEBIT' : a, particulars };
+};
 
 // Account statement API row -> "Account Statement" Excel columns
 export const accountRowFromApi = (row: any): Record<string, string> => {
@@ -19,10 +46,11 @@ export const accountRowFromApi = (row: any): Record<string, string> => {
     const refId = text(row?.remarks).match(/RefId-(\d+)/)?.[1];
     const ids = [text(row?.eventId), text(row?.id)];
     const eventId = refId && ids.includes(refId) ? refId : ids[0] || ids[1];
+    const { debitCredit, particulars } = splitDebitCredit(row?.event, row?.eventType);
     return {
-        'Added On': text(row?.txTime),
-        'Debit/Credit': text(row?.eventType).toUpperCase(),
-        'Particulars': text(row?.event),
+        'Added On': isoTime(row?.txTime),
+        'Debit/Credit': debitCredit,
+        'Particulars': particulars,
         'Charged Amount (INR)': text(row?.amount),
         'Amount (INR)': text(row?.transactionAmount),
         'Service Charge (INR)': text(row?.serviceCharge),
@@ -38,7 +66,7 @@ export const accountRowFromApi = (row: any): Record<string, string> => {
 export const transferRowFromApi = (data: any, beneficiaryName?: string): Record<string, string> => {
     const instrument = data?.beneficiary_details?.beneficiary_instrument_details || {};
     return {
-        'Added On': text(data?.added_on),
+        'Added On': isoTime(data?.added_on),
         'Amount': text(data?.transfer_amount),
         'Transfer Id': text(data?.transfer_id),
         'Reference Id': text(data?.cf_transfer_id),
@@ -54,7 +82,7 @@ export const transferRowFromApi = (data: any, beneficiaryName?: string): Record<
         'Mode': text(data?.transfer_mode).toUpperCase(),
         'Status Code': text(data?.status_code),
         'Payment Instrument ID': text(data?.fundsource_id),
-        'Last checked at': text(data?.updated_on),
+        'Last checked at': isoTime(data?.updated_on),
         'Status Description': text(data?.status_description),
     };
 };
