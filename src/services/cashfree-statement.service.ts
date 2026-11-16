@@ -236,7 +236,7 @@ export class CashfreeStatementService {
             return { message: 'A sync is already running', data: await this.getAccountSyncStatus() };
         }
         this.logger.log(`Cashfree account statement sync of ${range} days started by user ${userId}`);
-        syncAccountStatementFromCashfree(this.cashfreeStatementModel, range, `cashfree-api:${userId || ''}`)
+        syncAccountStatementFromCashfree(this.cashfreeStatementModel, range, `cashfree-api:${userId || ''}`, this.redemptionModel)
             .then(() => {
                 const state = getAccountSyncState();
                 if (state.status === 'failed') this.logger.error(`Cashfree account statement sync failed: ${state.error}`);

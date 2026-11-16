@@ -1,7 +1,9 @@
 /*
- * One-time fix: account statement rows synced from the Cashfree API before the mapping fix have
- * "Debit/Credit" = CASHFREE TRANSFER / ACCOUNT CREDIT and "Particulars" = DEBIT / CREDIT (swapped).
- * This puts DEBIT/CREDIT back in "Debit/Credit" and PAYOUT_TRANSFER / BANK_TRANSFER in "Particulars".
+ * One-time fix for rows synced from the Cashfree API before the mapping fixes:
+ *  - account rows with "Debit/Credit" = CASHFREE TRANSFER / ACCOUNT CREDIT and "Particulars" = DEBIT / CREDIT (swapped)
+ *    get DEBIT/CREDIT back in "Debit/Credit" and PAYOUT_TRANSFER / BANK_TRANSFER in "Particulars";
+ *  - times stored as "2026-11-16T18:23:40Z" or "2026-11-16 18:23:40" become "2026-11-16T18:23:40"
+ *    (Cashfree API times are IST; the "Z" is not UTC). Safe to run more than once.
  * Prints counts only.
  *
  * Usage (from the backend folder, on the server, .env with DB_URL):
@@ -24,29 +26,34 @@ const norm = (v) => {
 };
 const isDc = (v) => v === 'DEBIT' || v === 'CREDIT';
 
+// Cashfree API times are IST but were stored as "2026-11-16 18:23:40" or "2026-11-16T18:23:40Z"
+const iso = (v) => String(v || '').replace(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?Z?$/, '$1T$2');
+
 async function main() {
   const client = await MongoClient.connect(process.env.DB_URL);
   try {
     const col = client.db().collection('cashfreestatements');
-    const rows = await col.find({ statementType: 'ACCOUNT' }, { projection: { 'row.Debit/Credit': 1, 'row.Particulars': 1, 'row.Added On': 1 } }).toArray();
+    const rows = await col.find({}, { projection: { statementType: 1, 'row.Debit/Credit': 1, 'row.Particulars': 1, 'row.Added On': 1, 'row.Last checked at': 1 } }).toArray();
     const ops = [];
     const before = {};
     for (const doc of rows) {
-      const dc = String(doc.row?.['Debit/Credit'] || '').toUpperCase().trim();
-      const part = String(doc.row?.Particulars || '').toUpperCase().trim();
       const set = {};
-      if (isDc(part) && !isDc(dc)) Object.assign(set, { 'row.Debit/Credit': part, 'row.Particulars': norm(dc) });
-      else if (isDc(dc) && part && norm(part) !== part) set['row.Particulars'] = norm(part);
-      // API rows used "2026-11-16 18:23:40"; the dashboard export uses "2026-11-16T18:23:40"
-      const addedOn = String(doc.row?.['Added On'] || '');
-      const isoAddedOn = addedOn.replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/, '$1T$2');
-      if (isoAddedOn !== addedOn) set['row.Added On'] = isoAddedOn;
+      if (doc.statementType === 'ACCOUNT') {
+        const dc = String(doc.row?.['Debit/Credit'] || '').toUpperCase().trim();
+        const part = String(doc.row?.Particulars || '').toUpperCase().trim();
+        if (isDc(part) && !isDc(dc)) Object.assign(set, { 'row.Debit/Credit': part, 'row.Particulars': norm(dc) });
+        else if (isDc(dc) && part && norm(part) !== part) set['row.Particulars'] = norm(part);
+      }
+      for (const field of ['Added On', 'Last checked at']) {
+        const value = doc.row?.[field];
+        if (value && iso(value) !== String(value)) set[`row.${field}`] = iso(value);
+      }
       if (!Object.keys(set).length) continue;
-      const k = set['row.Debit/Credit'] || set['row.Particulars'] ? `columns "${dc} / ${part}"` : 'date format only';
+      const k = set['row.Debit/Credit'] || set['row.Particulars'] ? `${doc.statementType} swapped columns` : `${doc.statementType} time format only`;
       before[k] = (before[k] || 0) + 1;
       ops.push({ updateOne: { filter: { _id: doc._id }, update: { $set: set } } });
     }
-    console.log(`Account rows: ${rows.length} | to fix: ${ops.length}`);
+    console.log(`Rows checked: ${rows.length} | to fix: ${ops.length}`);
     Object.entries(before).forEach(([k, n]) => console.log(`  ${k}: ${n}`));
     if (!ops.length) return;
     if (!APPLY) {

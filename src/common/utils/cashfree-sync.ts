@@ -1,6 +1,6 @@
 import { Model } from 'mongoose';
 import { CASHFREE_STATEMENT_TYPE, CashfreeStatementDocument } from '../../entities/cashfree-statement.entity';
-import { fetchCashfreeAccountStatement } from './cashfree-payout';
+import { fetchCashfreeAccountStatement, getCashfreeTransferStatus } from './cashfree-payout';
 
 // Turns Cashfree API / webhook data into rows of the Cashfree Report, keyed by the same column
 // names as the dashboard Excel exports, so API rows and imported rows are the same records.
@@ -11,8 +11,10 @@ const UNIQUE_COLUMN: Record<CASHFREE_STATEMENT_TYPE, string> = {
 };
 
 const text = (value: any): string => (value === undefined || value === null ? '' : String(value).trim().slice(0, 500));
-// "2026-11-16 18:23:40" (API) -> "2026-11-16T18:23:40", the dashboard export's format
-const isoTime = (value: any): string => text(value).replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/, '$1T$2');
+// Cashfree API times are IST but come as "2026-11-16 18:23:40" or "2026-11-16T18:23:40Z" (a "Z" that is not UTC).
+// Stored as "2026-11-16T18:23:40", the dashboard export's format.
+export const isoTime = (value: any): string => text(value)
+    .replace(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?Z?$/, '$1T$2');
 
 // Cashfree dashboard export names -> the API's event names
 const PARTICULARS: Record<string, string> = {
@@ -125,26 +127,34 @@ export interface AccountSyncState {
     error: string;
     startedAt: Date | null;
     finishedAt: Date | null;
+    // second phase of a manual sync: transfer details of CRM payouts (gives mechanic name / mobile to the report)
+    phase: 'account' | 'transfers' | '';
+    transfersTotal: number;
+    transfersChecked: number;
+    transfersSaved: number;
 }
 
 // One account statement sync at a time in this process (manual button and the 30-minute cron share it)
-let accountSync: AccountSyncState = {
+const emptySyncState = (): AccountSyncState => ({
     status: 'idle', source: '', days: 0, daysDone: 0, fetched: 0, inserted: 0, updated: 0, error: '', startedAt: null, finishedAt: null,
-};
+    phase: '', transfersTotal: 0, transfersChecked: 0, transfersSaved: 0,
+});
+let accountSync: AccountSyncState = emptySyncState();
 
 export const getAccountSyncState = (): AccountSyncState => ({ ...accountSync });
 
 // Pulls the account statement for the last `days` days from Cashfree into the report, one day at a time,
 // saving every page as it arrives. Returns false (and does nothing) when a sync is already running.
+// With redemptionModel it then also fetches the Cashfree transfer of every CRM payout in the range that the
+// report does not have yet (the account statement alone has no beneficiary, so names come from transfers).
 export const syncAccountStatementFromCashfree = async (
     model: Model<CashfreeStatementDocument>,
     days: number,
     source: string,
+    redemptionModel?: Model<any>,
 ): Promise<boolean> => {
     if (accountSync.status === 'running') return false;
-    accountSync = {
-        status: 'running', source, days, daysDone: 0, fetched: 0, inserted: 0, updated: 0, error: '', startedAt: new Date(), finishedAt: null,
-    };
+    accountSync = { ...emptySyncState(), status: 'running', source, days, startedAt: new Date(), phase: 'account' };
     const dayMs = 24 * 60 * 60 * 1000;
     const end = Date.now();
     try {
@@ -160,6 +170,10 @@ export const syncAccountStatementFromCashfree = async (
             });
             accountSync.daysDone++;
         }
+        if (redemptionModel) {
+            accountSync.phase = 'transfers';
+            await backfillTransfers(model, redemptionModel, new Date(end - (days + 1) * dayMs), source);
+        }
         accountSync.status = 'success';
     } catch (error) {
         accountSync.status = 'failed';
@@ -168,6 +182,47 @@ export const syncAccountStatementFromCashfree = async (
         accountSync.finishedAt = new Date();
     }
     return true;
+};
+
+// Cashfree transfer details for CRM payouts since `since` that the report has no transfer row for
+const backfillTransfers = async (
+    model: Model<CashfreeStatementDocument>,
+    redemptionModel: Model<any>,
+    since: Date,
+    source: string,
+) => {
+    const known = new Set(
+        (await model.find(
+            { statementType: CASHFREE_STATEMENT_TYPE.TRANSFER, 'row.Reference Id': { $exists: true, $ne: '' } },
+            { uniqueId: 1 },
+        ).lean()).map((doc: any) => String(doc.uniqueId)),
+    );
+    const candidates = (await redemptionModel.find(
+        {
+            type: { $in: ['UPI', 'IMPS', 'Neft', 'NEFT'] },
+            status: { $in: ['Success', 'UNDER PROCESS', 'Rejected'] },
+            $or: [{ createdAt: { $gte: since } }, { statusUpdatedAt: { $gte: since } }],
+        },
+        { payment: 1 },
+    ).lean()).filter((redemption: any) => !known.has(String(redemption._id)));
+
+    accountSync.transfersTotal = candidates.length;
+    let errorsInARow = 0;
+    for (const redemption of candidates as any[]) {
+        try {
+            const transfer = await getCashfreeTransferStatus(String(redemption._id));
+            // not found: paid outside Cashfree or rejected before it reached Cashfree
+            if (transfer.found) {
+                const name = redemption?.payment?.holderName || redemption?.payment?.upiHolderName || '';
+                await upsertStatementRows(model, CASHFREE_STATEMENT_TYPE.TRANSFER, [transferRowFromApi(transfer.raw, name)], source);
+                accountSync.transfersSaved++;
+            }
+            errorsInARow = 0;
+        } catch (error) {
+            if (++errorsInARow >= 10) throw new Error(`Transfer details stopped after repeated Cashfree errors: ${error?.message}`);
+        }
+        accountSync.transfersChecked++;
+    }
 };
 
 // When rows last came from the Cashfree API (cron or manual), from the stored rows themselves
