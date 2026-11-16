@@ -195,6 +195,10 @@ export class Customer {
     upiBeneficiaryId : { type: String },
   }
 
+  // Set while a redemption is being created, so two parallel requests cannot both spend the same balance
+  @Prop({ type: Date })
+  redemptionLockUntil: Date;
+
   @Prop({ type: Date })
   loginAt: Date;
 

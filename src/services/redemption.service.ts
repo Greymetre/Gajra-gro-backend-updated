@@ -14,26 +14,14 @@ import { PaginationRequestDto } from 'src/dto/pagination-dto';
 import { async } from 'rxjs';
 import { CustomerIdDTO } from 'src/dto/dashboard-dto';
 const ObjectId = require('mongoose').Types.ObjectId;
-import { Payouts } from '@cashfreepayments/cashfree-sdk';
-import axios from 'axios';
+import { addCashfreeBeneficiary, initiateCashfreeTransfer } from 'src/common/utils/cashfree-payout';
 @Injectable()
 export class RedemptionService {
-  // initialize cashfree sdk
-  private payoutsInstance: Payouts;
   constructor(
-    // @InjectModel(Customer.name) private customerModel: Model<CustomerDocument>,
     @InjectModel(Redemption.name) private redemptionModel: Model<RedemptionDocument>,
     @InjectModel(Customer.name) private customerModel: Model<CustomerDocument>,
     @InjectModel(Transaction.name) private transactionModel: Model<TransactionDocument>,
     @InjectModel(SettingProject.name) private settingModel: Model<SettingProjectDocument>) {
-    this.payoutsInstance = new Payouts({
-      env: 'PRODUCTION',
-      clientId: process.env.CASHFREE_CLIENT_ID, // Replace with your Client ID
-      clientSecret: process.env.CASHFREE_CLIENT_SECRET, // Replace with your Client Secret
-      // Optional: For dynamic IPs, provide path to public key or publicKey string
-      // pathToPublicKey: '/path/to/your/public/key/file.pem',
-      // publicKey: '<YOUR_PUBLIC_KEY>',
-    });
   }
 
   public async getDate(): Promise<any> {
@@ -87,390 +75,179 @@ export class RedemptionService {
     }
   };
 
-  public async redemptionViaNeft(neftRedemptionDto: CreateNeftRedemptionDto): Promise<any> {
-    const setting = await this.getRedemptionSetting()
-    const points = await this.getCustomerBalancePoint(neftRedemptionDto.customerid)
-    neftRedemptionDto.points = neftRedemptionDto.payment.amount * setting.point_value
-    if (setting.first_threshold && points.redeempoint === 0 && points.balance < setting.threshold) {
-      throw new BadRequestException(`You must require atleast ${setting.threshold} points to redeem`);
+  /* ================= Cashfree payout helpers ================= */
+
+  private async notifyCustomer(customerid: any, title: string, body: (firmName: string) => string) {
+    try {
+      const customer = await this.customerModel.findById(customerid, { firmName: 1, deviceInfo: 1 }).lean();
+      if (customer) {
+        await PushNotification(`${customer?.deviceInfo?.deviceToken || ''}`, title, body(customer.firmName || ''), "Redeem History");
+      }
+    } catch (error) {
+      // notifications are best effort
     }
-    else if (setting.every_threshold && points.balance < setting.threshold) {
-      throw new BadRequestException(`You must require atleast ${setting.threshold} points to redeem`);
+  }
+
+  // Rejecting a redemption returns its points: the balance only counts redemptions that are not Rejected
+  private async markRejected(redemptionId: any, reason?: string) {
+    const set: Record<string, any> = { status: "Rejected", statusUpdatedAt: new Date() };
+    if (reason) set["payment.details"] = String(reason).slice(0, 500);
+    const redemption = await this.redemptionModel.findByIdAndUpdate(redemptionId, { $set: set }, { new: true, useFindAndModify: false });
+    if (redemption?.transactionid) {
+      await this.transactionModel.updateOne({ _id: redemption.transactionid }, { $set: { points: 0 } });
     }
-    else if (points.balance >= neftRedemptionDto.points) {
-      const refno = await this.getNewRefNoRedemption()
-      const customer = await this.customerModel.findOne({ _id: neftRedemptionDto.customerid })
-      const transaction = await this.transactionModel.create({ customerType: customer.customerType, customerid: neftRedemptionDto.customerid, points: neftRedemptionDto.points, pointType: "Redemption", transactionType: "Dr" });
-      neftRedemptionDto.transactionid = transaction._id
-      console.log("neftRedemptionDto", neftRedemptionDto);
+    return redemption;
+  }
 
-      var redemption = new this.redemptionModel({ ...neftRedemptionDto, refno: refno, status: neftRedemptionDto.points > 3000 || neftRedemptionDto.isAdmin ? 'Pending' : 'UNDER PROCESS', type: 'IMPS', createdAt: new Date() })
+  // Beneficiary already saved on the customer, or a new one added in Cashfree
+  private async ensureBeneficiary(customer: any, redemption: any): Promise<{ ok: boolean; id?: string; message?: string }> {
+    if (!customer) return { ok: false, message: "Customer not found" };
+    const isUpi = redemption.type === "UPI";
+    const field = isUpi ? "upiBeneficiaryId" : "bankAccountBeneficiaryId";
+    const existing = customer?.benifresiry?.[field];
+    if (existing) return { ok: true, id: existing };
 
-      if (neftRedemptionDto.points <= 3000 && !neftRedemptionDto.isAdmin) {
+    const payment = redemption.payment || {};
+    const beneId = (isUpi ? "UPI_Id" : "AccountId") + customer._id;
+    const result = await addCashfreeBeneficiary(isUpi
+      ? { beneId, name: payment.upiHolderName || customer.firmName || 'default name', phone: String(customer.mobile || ''), vpa: payment.upiNumber }
+      : { beneId, name: payment.holderName, phone: String(customer.mobile || ''), bankAccount: String(payment.accountNo || ''), ifsc: payment.ifsc });
+    if (!result.ok) return { ok: false, message: result.message };
 
-        if (customer?.benifresiry?.bankAccountBeneficiaryId) {
-          const transferData = {
-            beneficiary_details: { beneficiary_id: customer.benifresiry.bankAccountBeneficiaryId },
-            transfer_amount: neftRedemptionDto.points,
-            transfer_id: redemption._id,
-          }
-          let findRedemption = await this.redemptionModel.aggregate([
-            { $match: { customerid: ObjectId(neftRedemptionDto.customerid) } },
-            {
-              $lookup: {
-                from: "customers",
-                localField: "customerid",
-                foreignField: "_id",
-                pipeline: [
-                  { $project: { _id: 1, firmName: 1, deviceInfo: 1, } }
-                ],
-                as: "customerInfo",
-              },
-            },
-            { $unwind: { "path": "$customerInfo", "preserveNullAndEmptyArrays": true } },
-            {
-              $project: {
-                firmName: { $ifNull: ["$customerInfo.firmName", ""] },
-                deviceToken: { $ifNull: ["$customerInfo.deviceInfo.deviceToken", ""] },
-              }
-            }
-          ])
-          try {
-            await PushNotification(`${findRedemption[0].deviceToken}`, "Redemption is Success", `${findRedemption[0].firmName},  your redemption is Success`, "Redeem History");
-          } catch (error) {
-            console.log(error)
-          }
-          try {
-            const response = await axios.post(
-              "https://api.cashfree.com/payout/transfers",
-              transferData,
-              {
-                headers: {
-                  // Authorization: `Bearer ${token}`,
-                  "x-client-id": process.env.CASHFREE_CLIENT_ID,
-                  "x-client-secret": process.env.CASHFREE_CLIENT_SECRET,
-                  "X-Api-Version": "2024-01-01",
-                  "Content-Type": "application/json"
-                },
-              }
-            );
-            console.log(response.data);
-          } catch (error) {
-            console.error("Error initiating transfer:", error);
-          }
-        }
-        else {
-          // add beneficiary
-          let beneficiaryData = {
-            beneId: "AccountId" + neftRedemptionDto.customerid,
-            name: neftRedemptionDto.payment.holderName,
-            phone: customer.mobile,
-            bankAccount: neftRedemptionDto.payment.accountNo,
-            ifsc: neftRedemptionDto.payment.ifsc,
-            email: "user@example.com",
-            address1: "Default Address"
-          }
-          let isRejected=false;
-          const token = await this.getCashfreeAuthToken();
-          // if (!token) throw new Error("Failed to get authentication token from Cashfree");
-          const response = await this.addBeneficiary(token, beneficiaryData);
-          console.log("NEFT Beneficiary Response:", response);
-          if (response.status === "SUCCESS") {
-            console.log("Update user data with beneficiary id");
+    await this.customerModel.updateOne({ _id: customer._id }, { $set: { [`benifresiry.${field}`]: beneId } });
+    return { ok: true, id: beneId };
+  }
 
-            await this.customerModel.findByIdAndUpdate(neftRedemptionDto.customerid, { $set: { "benifresiry.bankAccountBeneficiaryId": "AccountId" + neftRedemptionDto.customerid } })
-            const transferData = {
-              beneficiary_details: { beneficiary_id: "AccountId" + neftRedemptionDto.customerid },
-              transfer_amount: neftRedemptionDto.points,
-              transfer_id: redemption._id,
-            }
-            try {
-              const response = await axios.post(
-                "https://api.cashfree.com/payout/transfers",
-                transferData,
-                {
-                  headers: {
-                    // Authorization: `Bearer ${token}`,
-                    "x-client-id": process.env.CASHFREE_CLIENT_ID,
-                    "x-client-secret": process.env.CASHFREE_CLIENT_SECRET,
-                    "X-Api-Version": "2024-01-01",
-                    "Content-Type": "application/json"
-                  },
-                }
-              );
-              console.log(response.data);
-            } catch (error) {
-              console.error("Error initiating transfer:", error);
-            }
-          }
-          else {
-            await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(redemption._id) }, { $set: { status: "Rejected", "payment.details": response.message } })
-            throw new BadRequestException(response.message);
-          }
-          // transfer money accrding to points
+  // Sends the redemption amount (in rupees) to Cashfree. The redemption _id is the Cashfree transfer_id,
+  // so sending the same redemption twice cannot pay twice. Final Success / Rejected comes from the status cron.
+  private async startCashfreePayout(redemptionId: any): Promise<{ ok: boolean; message?: string }> {
+    const redemption: any = await this.redemptionModel.findById(redemptionId).lean();
+    if (!redemption) throw new BadRequestException("Redemption Not found");
+    if (redemption.status === "Success" || redemption.status === "Rejected") {
+      throw new BadRequestException(`Redemption is already ${redemption.status}`);
+    }
 
-          let findRedemption = await this.redemptionModel.aggregate([
-            { $match: { customerid: ObjectId(neftRedemptionDto.customerid) } },
-            {
-              $lookup: {
-                from: "customers",
-                localField: "customerid",
-                foreignField: "_id",
-                pipeline: [
-                  { $project: { _id: 1, firmName: 1, deviceInfo: 1, } }
-                ],
-                as: "customerInfo",
-              },
-            },
-            { $unwind: { "path": "$customerInfo", "preserveNullAndEmptyArrays": true } },
-            {
-              $project: {
-                firmName: { $ifNull: ["$customerInfo.firmName", ""] },
-                deviceToken: { $ifNull: ["$customerInfo.deviceInfo.deviceToken", ""] },
-              }
-            }
-          ])
-          try {
-            await PushNotification(`${findRedemption[0].deviceToken}`, "Redemption is Success", `${findRedemption[0].firmName},  your redemption is Success`, "Redeem History");
-          } catch (error) {
-            console.log(error)
+    const amount = Number(redemption?.payment?.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      await this.markRejected(redemption._id, "Invalid redemption amount");
+      return { ok: false, message: "Invalid redemption amount" };
+    }
+
+    const customer = await this.customerModel.findById(redemption.customerid).lean();
+    const beneficiary = await this.ensureBeneficiary(customer, redemption);
+    if (!beneficiary.ok) {
+      await this.markRejected(redemption._id, beneficiary.message);
+      await this.notifyCustomer(redemption.customerid, " Redemption is Rejected  🚫", (name) => `${name}, your redemption is rejected`);
+      return { ok: false, message: beneficiary.message };
+    }
+
+    // Marked before the call so the status cron tracks it even if this process stops midway
+    await this.redemptionModel.updateOne({ _id: redemption._id }, { $set: { status: "UNDER PROCESS", statusUpdatedAt: new Date() } });
+    const result = await initiateCashfreeTransfer(String(redemption._id), beneficiary.id, amount, redemption.type === "UPI" ? "upi" : "banktransfer");
+    if (result.rejected) {
+      await this.markRejected(redemption._id, result.message);
+      await this.notifyCustomer(redemption.customerid, " Redemption is Rejected  🚫", (name) => `${name}, your redemption is rejected`);
+      return { ok: false, message: result.message };
+    }
+    if (!result.accepted) {
+      console.error(`Cashfree transfer for redemption ${redemption._id} not confirmed, status cron will resolve it: ${result.message}`);
+    }
+    return { ok: true };
+  }
+
+  // One redemption at a time per customer, so two parallel requests cannot both pass the balance check
+  private async acquireRedemptionLock(customerid: any): Promise<boolean> {
+    const now = new Date();
+    const locked = await this.customerModel.findOneAndUpdate(
+      { _id: ObjectId(customerid), $or: [{ redemptionLockUntil: { $exists: false } }, { redemptionLockUntil: null }, { redemptionLockUntil: { $lt: now } }] },
+      { $set: { redemptionLockUntil: new Date(now.getTime() + 60 * 1000) } },
+      { new: true, useFindAndModify: false },
+    ).lean();
+    return !!locked;
+  }
+
+  private async releaseRedemptionLock(customerid: any) {
+    await this.customerModel.updateOne({ _id: ObjectId(customerid) }, { $unset: { redemptionLockUntil: 1 } });
+  }
+
+  private async createPayoutRedemption(dto: CreateNeftRedemptionDto | CreateUpiRedemptionDto, type: "IMPS" | "UPI"): Promise<any> {
+    const raw: any = dto?.payment || {};
+    const amount = Number(raw.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || Math.abs(Math.round(amount * 100) - amount * 100) > 1e-6) {
+      throw new BadRequestException('Please enter a valid amount');
+    }
+    const payment = type === "UPI"
+      ? { method: raw.method, upiNumber: String(raw.upiNumber || '').trim(), upiHolderName: raw.upiHolderName, amount }
+      : { method: raw.method, accountNo: String(raw.accountNo || '').trim(), holderName: raw.holderName, bankName: raw.bankName, ifsc: String(raw.ifsc || '').trim(), amount };
+    if (type === "UPI" && !payment.upiNumber) throw new BadRequestException('UPI id is required');
+    if (type === "IMPS" && (!payment.accountNo || !payment.ifsc || !payment.holderName)) {
+      throw new BadRequestException('Account number, IFSC and holder name are required');
+    }
+
+    const customer = await this.customerModel.findById(dto.customerid).lean();
+    if (!customer) throw new BadRequestException('Customer not found');
+    if (!(await this.acquireRedemptionLock(customer._id))) {
+      throw new BadRequestException('Another redemption is in progress. Please try again in a minute.');
+    }
+
+    let redemption: any;
+    const isAdmin = dto.isAdmin === true;
+    try {
+      const setting = await this.getRedemptionSetting()
+      const points = await this.getCustomerBalancePoint(customer._id)
+      const redeemPoints = amount * (Number(setting?.point_value) || 1)
+      if (setting.first_threshold && points.redeempoint === 0 && points.balance < setting.threshold) {
+        throw new BadRequestException(`You must require atleast ${setting.threshold} points to redeem`);
+      }
+      if (setting.every_threshold && points.balance < setting.threshold) {
+        throw new BadRequestException(`You must require atleast ${setting.threshold} points to redeem`);
+      }
+      if (points.balance < redeemPoints) {
+        throw new BadRequestException('insufficient balance');
+      }
+
+      const transaction = await this.transactionModel.create({ customerType: customer.customerType, customerid: customer._id, points: redeemPoints, pointType: "Redemption", transactionType: "Dr" });
+      const status = redeemPoints > 3000 || isAdmin ? 'Pending' : 'UNDER PROCESS'
+      // refno is max+1, so a parallel redemption of another customer can collide: retry on duplicate key
+      for (let attempt = 0; attempt < 3 && !redemption; attempt++) {
+        try {
+          redemption = await this.redemptionModel.create({
+            customerid: customer._id,
+            payment,
+            points: redeemPoints,
+            transactionid: transaction._id,
+            refno: await this.getNewRefNoRedemption(),
+            status,
+            type,
+            createdAt: new Date(),
+            statusUpdatedAt: new Date(),
+          });
+        } catch (error) {
+          if (error?.code !== 11000 || attempt === 2) {
+            await this.transactionModel.findByIdAndDelete(transaction._id);
+            throw new BadRequestException('Unable to create redemption. Please try again.');
           }
         }
       }
-
-      redemption.save(async (err, doc) => {
-        if (err) {
-          await this.redemptionModel.findByIdAndDelete(transaction._id)
-          throw new BadRequestException(err)
-        }
-        const findRedemption = await this.redemptionModel.aggregate([
-          { $match: { customerid: ObjectId(neftRedemptionDto.customerid) } },
-          {
-            $lookup: {
-              from: "customers",
-              localField: "customerid",
-              foreignField: "_id",
-              pipeline: [
-                { $project: { _id: 1, firmName: 1, deviceInfo: 1, } }
-              ],
-              as: "customerInfo",
-            },
-          },
-          { $unwind: { "path": "$customerInfo", "preserveNullAndEmptyArrays": true } },
-          {
-            $project: {
-              firmName: { $ifNull: ["$customerInfo.firmName", ""] },
-              deviceToken: { $ifNull: ["$customerInfo.deviceInfo.deviceToken", ""] },
-            }
-          }
-
-        ])
-        if (findRedemption.length > 0 && !neftRedemptionDto.isAdmin) {
-          if (findRedemption) {
-            await PushNotification(`${findRedemption[0].deviceToken}`, " Redemption Request Sent  💸", `${findRedemption[0].firmName}, your redemption request of ${neftRedemptionDto.points} Points is sent successfully`, "Redeem History");
-          }
-        }
-
-        return new GetRedemptionInfoDto(doc)
-      });
+    } finally {
+      await this.releaseRedemptionLock(customer._id);
     }
-    else {
-      throw new BadRequestException('insufficient balance');
+
+    if (!isAdmin) {
+      await this.notifyCustomer(customer._id, " Redemption Request Sent  💸", (name) => `${name}, your redemption request of ${redemption.points} Points is sent successfully`);
     }
+    if (redemption.status === 'UNDER PROCESS') {
+      await this.startCashfreePayout(redemption._id);
+    }
+    return new GetRedemptionInfoDto(await this.redemptionModel.findById(redemption._id).lean());
+  }
+
+  public async redemptionViaNeft(neftRedemptionDto: CreateNeftRedemptionDto): Promise<any> {
+    return this.createPayoutRedemption(neftRedemptionDto, "IMPS");
   };
 
   public async redemptionViaUpi(upiRedemptionDto: CreateUpiRedemptionDto): Promise<any> {
-    const setting = await this.getRedemptionSetting()
-    const points = await this.getCustomerBalancePoint(upiRedemptionDto.customerid)
-    upiRedemptionDto.points = upiRedemptionDto.payment.amount * setting.point_value
-    if (setting.first_threshold && points.redeempoint === 0 && points.balance < setting.threshold) {
-      throw new BadRequestException(`You must require atleast ${setting.threshold} points to redeem`);
-    }
-    else if (setting.every_threshold && points.balance < setting.threshold) {
-      throw new BadRequestException(`You must require atleast ${setting.threshold} points to redeem`);
-    }
-    else if (points.balance >= upiRedemptionDto.points) {
-      let customer = await this.customerModel.findOne({ _id: upiRedemptionDto.customerid })
-      const transaction = await this.transactionModel.create({ customerType: customer.customerType, customerid: upiRedemptionDto.customerid, points: upiRedemptionDto.points, pointType: "Redemption", transactionType: "Dr" });
-      upiRedemptionDto.transactionid = transaction._id
-      const refno = await this.getNewRefNoRedemption()
-      var redemption = new this.redemptionModel({ ...upiRedemptionDto, status: upiRedemptionDto.points > 3000 || upiRedemptionDto.isAdmin ? 'Pending' : 'UNDER PROCESS', type: 'UPI', refno: refno, createdAt: new Date() })
-      if (upiRedemptionDto.points <= 3000 && !upiRedemptionDto.isAdmin) {
-        if (customer?.benifresiry?.upiBeneficiaryId) {
-          const transferData = {
-            beneficiary_details: { beneficiary_id: customer.benifresiry.upiBeneficiaryId },
-            transfer_amount: upiRedemptionDto.points,
-            transfer_id: redemption._id,
-            transfer_mode: "upi",
-          }
-          console.log("transferData", `TR-${redemption._id}`);
-          let findRedemption = await this.redemptionModel.aggregate([
-            { $match: { customerid: ObjectId(upiRedemptionDto.customerid) } },
-            {
-              $lookup: {
-                from: "customers",
-                localField: "customerid",
-                foreignField: "_id",
-                pipeline: [
-                  { $project: { _id: 1, firmName: 1, deviceInfo: 1, } }
-                ],
-                as: "customerInfo",
-              },
-            },
-            { $unwind: { "path": "$customerInfo", "preserveNullAndEmptyArrays": true } },
-            {
-              $project: {
-                firmName: { $ifNull: ["$customerInfo.firmName", ""] },
-                deviceToken: { $ifNull: ["$customerInfo.deviceInfo.deviceToken", ""] },
-              }
-            }
-          ])
-          try {
-            await PushNotification(`${findRedemption[0].deviceToken}`, "Redemption is Success", `${findRedemption[0].firmName},  your redemption is Success`, "Redeem History");
-
-          } catch (error) {
-            console.log(error);
-
-          }
-          try {
-            const response = await axios.post(
-              "https://api.cashfree.com/payout/transfers",
-              transferData,
-              {
-                headers: {
-                  // Authorization: `Bearer ${token}`,
-                  "x-client-id": process.env.CASHFREE_CLIENT_ID,
-                  "x-client-secret": process.env.CASHFREE_CLIENT_SECRET,
-                  "X-Api-Version": "2024-01-01",
-                  "Content-Type": "application/json"
-                },
-              }
-            );
-            console.log(response.data);
-          } catch (error) {
-            console.error("Error initiating transfer:", error);
-          }
-        }
-        else {
-          let beneficiaryData = {
-            beneId: "UPI_Id" + upiRedemptionDto.customerid,
-            name: upiRedemptionDto.payment.upiHolderName ? upiRedemptionDto.payment.upiHolderName : customer.firmName ? customer.firmName : 'default name',
-            phone: customer.mobile,
-            vpa: upiRedemptionDto.payment.upiNumber,
-            email: "user@example.com",
-            address1: "Default Address"
-          }
-          const token = await this.getCashfreeAuthToken();
-          if (!token) throw new Error("Failed to get authentication token from Cashfree");
-          const response = await this.addBeneficiary(token, beneficiaryData);
-          console.log("NEFT Beneficiary Response:", response);
-          if (response.status === "SUCCESS") {
-            console.log("Update user data with beneficiary id");
-
-            await this.customerModel.findByIdAndUpdate(upiRedemptionDto.customerid, { $set: { "benifresiry.upiBeneficiaryId": "UPI_Id" + upiRedemptionDto.customerid } })
-            const transferData = {
-              beneficiary_details: { beneficiary_id: "UPI_Id" + upiRedemptionDto.customerid },
-              transfer_amount: upiRedemptionDto.points,
-              transfer_id: redemption._id,
-              transfer_mode: "upi",
-            }
-
-            try {
-              const response = await axios.post(
-                "https://api.cashfree.com/payout/transfers",
-                transferData,
-                {
-                  headers: {
-                    // Authorization: `Bearer ${token}`,
-                    "x-client-id": process.env.CASHFREE_CLIENT_ID,
-                    "x-client-secret": process.env.CASHFREE_CLIENT_SECRET,
-                    "X-Api-Version": "2024-01-01",
-                    "Content-Type": "application/json"
-                  },
-                }
-              );
-              console.log(response.data);
-            } catch (error) {
-              console.error("Error initiating transfer:", error);
-            }
-          }
-          else {
-            await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(redemption._id) }, { $set: { status: "Rejected", "payment.details": response.message } })
-            throw new BadRequestException(response.message);
-          }
-          // transfer money accrding to points
-
-          let findRedemption = await this.redemptionModel.aggregate([
-            { $match: { customerid: ObjectId(upiRedemptionDto.customerid) } },
-            {
-              $lookup: {
-                from: "customers",
-                localField: "customerid",
-                foreignField: "_id",
-                pipeline: [
-                  { $project: { _id: 1, firmName: 1, deviceInfo: 1, } }
-                ],
-                as: "customerInfo",
-              },
-            },
-            { $unwind: { "path": "$customerInfo", "preserveNullAndEmptyArrays": true } },
-            {
-              $project: {
-                firmName: { $ifNull: ["$customerInfo.firmName", ""] },
-                deviceToken: { $ifNull: ["$customerInfo.deviceInfo.deviceToken", ""] },
-              }
-            }
-          ])
-          try {
-            await PushNotification(`${findRedemption[0].deviceToken}`, "Redemption is Success", `${findRedemption[0].firmName},  your redemption is Success`, "Redeem History");
-          } catch (error) {
-            console.log(error);
-
-          }
-        }
-      }
-      redemption.save(async (err, doc) => {
-        if (err) {
-          await this.redemptionModel.findByIdAndDelete(transaction._id)
-          throw new BadRequestException(err)
-        }
-        const findRedemption = await this.redemptionModel.aggregate([
-          { $match: { customerid: ObjectId(upiRedemptionDto.customerid) } },
-          {
-            $lookup: {
-              from: "customers",
-              localField: "customerid",
-              foreignField: "_id",
-              pipeline: [
-                { $project: { _id: 1, firmName: 1, deviceInfo: 1, } }
-              ],
-              as: "customerInfo",
-            },
-          },
-          { $unwind: { "path": "$customerInfo", "preserveNullAndEmptyArrays": true } },
-          {
-            $project: {
-              firmName: { $ifNull: ["$customerInfo.firmName", ""] },
-              deviceToken: { $ifNull: ["$customerInfo.deviceInfo.deviceToken", ""] },
-            }
-          }
-
-        ])
-        if (findRedemption.length > 0 && upiRedemptionDto.points >= 3000 && !upiRedemptionDto.isAdmin) {
-          if (findRedemption) {
-
-            await PushNotification(`${findRedemption[0].deviceToken}`, " Redemption Request Sent  💸", `${findRedemption[0].firmName}, your redemption request of ${upiRedemptionDto.points} Points is sent successfully`, "Redeem History");
-
-          }
-        }
-        return new GetRedemptionInfoDto(doc)
-      });
-    }
-    else {
-      console.log("call");
-
-      throw new BadRequestException('insufficient balance');
-    }
+    return this.createPayoutRedemption(upiRedemptionDto, "UPI");
   };
 
   public async createRedemption(createRedemptionDto: CreateGiftRedemptionDto, req: Request) {
@@ -738,273 +515,48 @@ export class RedemptionService {
   };
 
   async updateRedemptionStatus(id: string, statussRedemptionDto: StatussRedemptionDto): Promise<Redemption> {
+    const redemption: any = await this.redemptionModel.findById(id).lean();
+    if (!redemption) throw new BadRequestException("Redemption Not found");
+    const status = statussRedemptionDto.status;
     try {
-      let isRejected = false;
-      const findRedemption = await this.redemptionModel.aggregate([
-        { $match: { _id: ObjectId(id) } },
-        {
-          $lookup: {
-            from: "customers",
-            localField: "customerid",
-            foreignField: "_id",
-            pipeline: [
-              { $project: { _id: 1, firmName: 1, deviceInfo: 1, mobile: 1, benifresiry: 1 } }
-            ],
-            as: "customerInfo",
-          },
-        },
-        { $unwind: { "path": "$customerInfo", "preserveNullAndEmptyArrays": true } },
-        {
-          $project: {
-            firmName: { $ifNull: ["$customerInfo.firmName", ""] },
-            deviceToken: { $ifNull: ["$customerInfo.deviceInfo.deviceToken", ""] },
-            type: { $ifNull: ["$type", ""] },
-            payment: { $ifNull: ["$payment", ""] },
-            mobile: { $ifNull: ["$customerInfo.mobile", ""] },
-            benifresiry: { $ifNull: ["$customerInfo.benifresiry", ""] },
-            customerid: { $ifNull: ["$customerInfo._id", ""] },
-            points: { $ifNull: ["$points", 0] },
-          }
-        }
-
-      ])
-      if (findRedemption.length > 0) {
-        if (findRedemption) {
-          try {
-            if (statussRedemptionDto.status == "Rejected") {
-              await PushNotification(`${findRedemption[0].deviceToken}`, " Redemption is Rejected  🚫", `${findRedemption[0].firmName}, your redemption is rejected`, "Redeem History");
-            } else if (statussRedemptionDto.status == "Approved") {
-              // get custommer data friom settings
-
-              if (findRedemption[0].type == "Neft" || findRedemption[0].type == "IMPS") {
-                // call addBeneficiary method
-                let beneficiaryData = {
-                  beneId: "AccountId" + findRedemption[0].customerid,
-                  name: findRedemption[0].payment.holderName,
-                  phone: findRedemption[0].mobile,
-                  bankAccount: findRedemption[0].payment.accountNo,
-                  ifsc: findRedemption[0].payment.ifsc,
-                  email: "user@example.com",
-                  address1: "Default Address"
-                };
-                const token = await this.getCashfreeAuthToken();
-                console.log(token);
-
-                if (!token) throw new Error("Failed to get authentication token from Cashfree");
-                if (!findRedemption[0]?.beneficiary?.bankAccountBeneficiaryId) {
-                  const response = await this.addBeneficiary(token, beneficiaryData);
-                  // udpate customer benifresiry id
-                  console.log("NEFT Beneficiary Response:", response);
-                  if (response.status == "SUCCESS") {
-                    await this.customerModel.findByIdAndUpdate(findRedemption[0].customerid, { $set: { "benifresiry.bankAccountBeneficiaryId": "AccountId" + findRedemption[0].customerid } })
-                  }
-                  else {
-                    await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(findRedemption[0]._id) }, { $set: { status: "Rejected", "payment.details": response.message } })
-                    isRejected = true;
-                    throw new BadRequestException(response.message)
-                  }
-                }
-              }
-              else if (findRedemption[0].type == "UPI") {
-                console.log("Processing UPI Beneficiary...");
-
-                const token = await this.getCashfreeAuthToken();
-                if (!token) throw new Error("Failed to get authentication token from Cashfree");
-
-                let beneficiaryData = {
-                  beneId: "UPI_Id" + findRedemption[0].customerid,
-                  name: findRedemption[0].payment.upiHolderName ? findRedemption[0].payment.upiHolderName : 'default name',
-                  phone: findRedemption[0].mobile,
-                  vpa: findRedemption[0].payment.upiNumber,
-                  email: "user@example.com",
-                  address1: "Default Address"
-                };
-
-                if (!findRedemption[0]?.beneficiary?.upiBeneficiaryId) {
-                  const response = await this.addBeneficiary(token, beneficiaryData);
-                  // udpate customer benifresiry id
-                  console.log("UPI Beneficiary Response:", response);
-                  if (response.status === "SUCCESS") {
-                    await this.customerModel.findByIdAndUpdate(findRedemption[0].customerid, { $set: { "benifresiry.upiBeneficiaryId": "UPI_Id" + findRedemption[0].customerid } })
-                  }
-                  else {
-                    await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(findRedemption[0]._id) }, { $set: { status: "Rejected", "payment.details": response.message } })
-                    isRejected = true;
-                    throw new BadRequestException(response.message)
-                  }
-                }
-
-              }
-              await PushNotification(`${findRedemption[0].deviceToken}`, "Redemption is Approved ✅", `${findRedemption[0].firmName},  your redemption is approved`, "Redeem History");
-
-            } else if (statussRedemptionDto.status == "Pending") {
-              await PushNotification(`${findRedemption[0].deviceToken}`, "Redemption is Pending", `${findRedemption[0].firmName},  your redemption is Pending`, "Redeem History");
-
-            } else if (statussRedemptionDto.status == "Success") {
-
-              if (findRedemption[0].type == "Neft" || findRedemption[0].type == "IMPS") {
-                let beneficiaryData = {
-                  beneId: "AccountId" + findRedemption[0].customerid,
-                  name: findRedemption[0].payment.holderName,
-                  phone: findRedemption[0].mobile,
-                  bankAccount: findRedemption[0].payment.accountNo,
-                  ifsc: findRedemption[0].payment.ifsc,
-                  email: "user@example.com",
-                  address1: "Default Address"
-                };
-                const token = await this.getCashfreeAuthToken();
-                console.log(token);
-
-                if (!token) throw new Error("Failed to get authentication token from Cashfree");
-                if (!findRedemption[0]?.beneficiary?.bankAccountBeneficiaryId) {
-                  const response = await this.addBeneficiary(token, beneficiaryData);
-                  // udpate customer benifresiry id
-                  console.log("NEFT Beneficiary Response:", response);
-                  if (response.status === "SUCCESS") {
-                    await this.customerModel.findByIdAndUpdate(findRedemption[0].customerid, { $set: { "benifresiry.bankAccountBeneficiaryId": "AccountId" + findRedemption[0].customerid } })
-                  }
-                  else {
-                    await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(findRedemption[0]._id) }, { $set: { status: "Rejected", "payment.details": response.message } })
-                    isRejected = true;
-                    throw new BadRequestException(response.message)
-                  }
-                }
-
-                let customerData = await this.customerModel.findById(findRedemption[0].customerid)
-                const transferData = {
-                  beneficiary_details: { beneficiary_id: customerData.benifresiry.bankAccountBeneficiaryId },
-                  transfer_amount: findRedemption[0].payment.amount,
-                  transfer_id: findRedemption[0]._id,
-                }
-
-                try {
-                  const response = await axios.post(
-                    "https://api.cashfree.com/payout/transfers",
-                    transferData,
-                    {
-                      headers: {
-                        // Authorization: `Bearer ${token}`,
-                        "x-client-id": process.env.CASHFREE_CLIENT_ID,
-                        "x-client-secret": process.env.CASHFREE_CLIENT_SECRET,
-                        "X-Api-Version": "2024-01-01",
-                        "Content-Type": "application/json"
-                      },
-                    }
-                  );
-                  console.log(response.data);
-                } catch (error) {
-                  isRejected = true;
-                  console.error("Error initiating transfer:", error);
-                }
-
-
-              }
-              else if (findRedemption[0].type == "UPI") {
-                console.log("Processing UPI Beneficiary...");
-
-                const token = await this.getCashfreeAuthToken();
-                if (!token) throw new Error("Failed to get authentication token from Cashfree");
-
-                let beneficiaryData = {
-                  beneId: "UPI_Id" + findRedemption[0].customerid,
-                  name: findRedemption[0].payment.upiHolderName ? findRedemption[0].payment.upiHolderName : 'default name',
-                  phone: findRedemption[0].mobile,
-                  vpa: findRedemption[0].payment.upiNumber,
-                  email: "user@example.com",
-                  address1: "Default Address"
-                };
-                if (!findRedemption[0]?.beneficiary?.upiBeneficiaryId) {
-                  const response = await this.addBeneficiary(token, beneficiaryData);
-                  // udpate customer benifresiry id
-                  console.log("UPI Beneficiary Response:", response);
-                  if (response.status == "SUCCESS") {
-                    await this.customerModel.findByIdAndUpdate(findRedemption[0].customerid, { $set: { "benifresiry.upiBeneficiaryId": "UPI_Id" + findRedemption[0].customerid, } })
-                  }
-                  else {
-                    await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(findRedemption[0]._id) }, { $set: { status: "Rejected", "payment.details": response.message } })
-                    isRejected = true;
-                    throw new BadRequestException(response.message)
-                  }
-                }
-                let customerData = await this.customerModel.findById(findRedemption[0].customerid)
-                const transferData = {
-                  beneficiary_details: { beneficiary_id: customerData.benifresiry.upiBeneficiaryId },
-                  transfer_amount: findRedemption[0].payment.amount,
-                  transfer_id: findRedemption[0]._id,
-                  transfer_mode: "upi",
-                }
-                try {
-                  const response = await axios.post(
-                    "https://api.cashfree.com/payout/transfers",
-                    transferData,
-                    {
-                      headers: {
-                        // Authorization: `Bearer ${token}`,
-                        "x-client-id": process.env.CASHFREE_CLIENT_ID,
-                        "x-client-secret": process.env.CASHFREE_CLIENT_SECRET,
-                        "X-Api-Version": "2024-01-01",
-                        "Content-Type": "application/json"
-                      },
-                    }
-                  );
-                  console.log(response.data);
-                } catch (error) {
-                  isRejected = true;
-                  console.error("Error initiating transfer:", error);
-                }
-              }
-
-              try {
-                await PushNotification(`${findRedemption[0].deviceToken}`, "Redemption is Success", `${findRedemption[0].firmName},  your redemption is Success`, "Redeem History");
-              } catch (error) {
-
-              }
-            }
-          } catch (error) {
-            if (isRejected)
-              return await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(findRedemption[0]._id) }, { $set: { status: "Rejected" } })
-            else
-              return await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(id) }, { status: statussRedemptionDto.status == "Success" ? "UNDER PROCESS" : statussRedemptionDto.status }, { new: true, useFindAndModify: false })
-          }
-
-        }
+      if (status == "Rejected") {
+        this.assertNotPaidByCashfree(redemption);
+        await this.markRejected(redemption._id);
+        await this.notifyCustomer(redemption.customerid, " Redemption is Rejected  🚫", (name) => `${name}, your redemption is rejected`);
+        return await this.redemptionModel.findById(id);
       }
-
-      return await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(id) }, { status: statussRedemptionDto.status == "Success" ? "UNDER PROCESS" : statussRedemptionDto.status, statusUpdatedAt: new Date() }, { new: true, useFindAndModify: false })
-
+      if (status == "Success") {
+        // "Success" from the CRM means: send the payment through Cashfree now
+        await this.startCashfreePayout(redemption._id);
+        return await this.redemptionModel.findById(id);
+      }
+      if (status == "Approved") {
+        const customer = await this.customerModel.findById(redemption.customerid).lean();
+        const beneficiary = await this.ensureBeneficiary(customer, redemption);
+        if (!beneficiary.ok) {
+          return await this.markRejected(redemption._id, beneficiary.message);
+        }
+        await this.notifyCustomer(redemption.customerid, "Redemption is Approved ✅", (name) => `${name},  your redemption is approved`);
+      } else if (status == "Pending") {
+        await this.notifyCustomer(redemption.customerid, "Redemption is Pending", (name) => `${name},  your redemption is Pending`);
+      }
+      return await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(id) }, { status, statusUpdatedAt: new Date() }, { new: true, useFindAndModify: false })
     }
     catch (e) {
-      throw new InternalServerErrorException('error while getting redemption details' + e,);
+      if (e instanceof BadRequestException) throw e;
+      throw new InternalServerErrorException('error while updating redemption status');
     }
   };
 
-  async getCashfreeAuthToken(): Promise<string | null> {
-    try {
-      const response = await axios.post(
-        "https://payout-api.cashfree.com/payout/v1/authorize",
-        {},
-        {
-          headers: {
-            "x-client-id": process.env.CASHFREE_CLIENT_ID,
-            "x-client-secret": process.env.CASHFREE_CLIENT_SECRET,
-            "X-Api-Version": "2023-08-01",
-            "Content-Type": "application/json"
-          }
-        }
-      );
-
-      if (response.data && response.data.status === "SUCCESS") {
-        return response.data.data.token;
-      } else {
-        console.error("Cashfree Auth Failed:", response.data);
-        return null;
-      }
-    } catch (error) {
-      console.error("Error getting Cashfree Auth Token:", error);
-      return null;
+  // Money already sent (or in flight) through Cashfree must not be rejected: that would return the points too
+  private assertNotPaidByCashfree(redemption: any) {
+    if (redemption.status === "UNDER PROCESS") {
+      throw new BadRequestException("Payment is in process with Cashfree and cannot be rejected now");
+    }
+    if (redemption.status === "Success" && redemption?.payment?.fundSource) {
+      throw new BadRequestException("Payment is already completed through Cashfree and cannot be rejected");
     }
   }
-
 
   async updateStatus(statusRedemptionDto: StatusRedemptionDto): Promise<Redemption> {
     try {
@@ -1343,283 +895,64 @@ export class RedemptionService {
   public async approvedRedemption(approvedRedemptionDto: ApprovedRedemptionDto): Promise<any> {
     const { redemptionid, ...approval } = approvedRedemptionDto;
 
-    return await this.redemptionModel.findOneAndUpdate({ _id: ObjectId(approvedRedemptionDto.redemptionid) },
-      { $set: { approval: { ...approval, approvedAt: new Date() }, status: 'Approved' } },
+    const redemption = await this.redemptionModel.findOneAndUpdate({ _id: ObjectId(redemptionid) },
+      { $set: { approval: { ...approval, approvedAt: new Date() }, status: 'Approved', statusUpdatedAt: new Date() } },
       { new: true, useFindAndModify: false }
-    )
-      .then(async (redemption) => {
-        if (!redemption) throw new BadRequestException("Redemption Not found");
+    );
+    if (!redemption) throw new BadRequestException("Redemption Not found");
 
-        const findRedemption = await this.redemptionModel.aggregate([
-          { $match: { _id: ObjectId(approvedRedemptionDto.redemptionid) } },
-          {
-            $lookup: {
-              from: "customers",
-              localField: "customerid",
-              foreignField: "_id",
-              pipeline: [
-                { $project: { _id: 1, firmName: 1, deviceInfo: 1, mobile: 1, benifresiry: 1 } }
-              ],
-              as: "customerInfo",
-            },
-          },
-          { $unwind: { "path": "$customerInfo", "preserveNullAndEmptyArrays": true } },
-          {
-            $project: {
-              firmName: { $ifNull: ["$customerInfo.firmName", ""] },
-              deviceToken: { $ifNull: ["$customerInfo.deviceInfo.deviceToken", ""] },
-              payment: { $ifNull: ["$payment", ""] },
-              type: { $ifNull: ["$type", ""] },
-              mobile: { $ifNull: ["$customerInfo.mobile", ""] },
-              benifresiry: { $ifNull: ["$customerInfo.benifresiry", ""] },
-              customerid: { $ifNull: ["$customerInfo._id", ""] },
-            }
-          }
-
-        ])
-        if (findRedemption.length > 0) {
-          if (findRedemption) {
-            if (findRedemption[0].type == "Neft" || findRedemption[0].type == "IMPS") {
-              // call addBeneficiary method
-              let beneficiaryData = {
-                beneId: "AccountId" + findRedemption[0].customerid,
-                name: findRedemption[0].payment.holderName,
-                phone: findRedemption[0].mobile,
-                bankAccount: findRedemption[0].payment.accountNo,
-                ifsc: findRedemption[0].payment.ifsc,
-                email: "user@example.com",
-                address1: "Default Address"
-              };
-              const token = await this.getCashfreeAuthToken();
-              console.log(token);
-
-              let customerData = await this.customerModel.findById(findRedemption[0].customerid);
-              let bankAccountBeneficiaryId = customerData?.benifresiry?.bankAccountBeneficiaryId;
-
-              if (!token) throw new Error("Failed to get authentication token from Cashfree");
-              if (!bankAccountBeneficiaryId) {
-                const response = await this.addBeneficiary(token, beneficiaryData);
-                // udpate customer benifresiry id
-                console.log("NEFT Beneficiary Response:", response);
-                if (response.status == "SUCCESS") {
-                  await this.customerModel.findByIdAndUpdate(findRedemption[0].customerid, { $set: { "benifresiry.bankAccountBeneficiaryId": "AccountId" + findRedemption[0].customerid } })
-                }
-                else {
-                  await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(approvedRedemptionDto.redemptionid) }, { $set: { status: "Rejected", "payment.details": response.message } })
-                  throw new BadRequestException(response.message);
-                }
-              }
-
-
-            }
-            else if (findRedemption[0].type == "UPI") {
-              console.log("Processing UPI Beneficiary...");
-
-              const token = await this.getCashfreeAuthToken();
-              if (!token) throw new Error("Failed to get authentication token from Cashfree");
-
-              let beneficiaryData = {
-                beneId: "UPI_Id" + findRedemption[0].customerid,
-                name: findRedemption[0].payment.upiHolderName ? findRedemption[0].payment.upiHolderName : 'default name',
-                phone: findRedemption[0].mobile,
-                vpa: findRedemption[0].payment.upiNumber,
-                email: "user@example.com",
-                address1: "Default Address"
-              };
-
-
-              let customerData = await this.customerModel.findById(findRedemption[0].customerid);
-              let upiBeneficiaryId = customerData?.benifresiry?.upiBeneficiaryId;
-              if (!upiBeneficiaryId) {
-                const response = await this.addBeneficiary(token, beneficiaryData);
-                // udpate customer benifresiry id
-                console.log("UPI Beneficiary Response:", response);
-                if (response.status == "SUCCESS") {
-                  await this.customerModel.findByIdAndUpdate(findRedemption[0].customerid, { $set: { "benifresiry.upiBeneficiaryId": "UPI_Id" + findRedemption[0].customerid } })
-                }
-                else {
-                  await this.redemptionModel.findByIdAndUpdate({ _id: ObjectId(approvedRedemptionDto.redemptionid) }, { $set: { status: "Rejected", "payment.details": response.message } })
-                  throw new BadRequestException(response.message);
-                }
-              }
-
-            }
-
-            try {
-              await PushNotification(`${findRedemption[0].deviceToken}`, "Redemption is Approved ✅", `${findRedemption[0].firmName},  your redemption is approved`, "Redeem History");
-
-            } catch (error) {
-
-            }
-          }
-        }
-        return new GetRedemptionInfoDto(redemption)
-      });
+    const customer = await this.customerModel.findById(redemption.customerid).lean();
+    const beneficiary = await this.ensureBeneficiary(customer, redemption);
+    if (!beneficiary.ok) {
+      await this.markRejected(redemption._id, beneficiary.message);
+      throw new BadRequestException(beneficiary.message);
+    }
+    await this.notifyCustomer(redemption.customerid, "Redemption is Approved ✅", (name) => `${name},  your redemption is approved`);
+    return new GetRedemptionInfoDto(redemption)
   };
 
   public async rejectedRedemption(rejectedRedemptionDto: RejectRedemptionDto): Promise<any> {
     const { redemptionid, ...rejected } = rejectedRedemptionDto
-    return await this.redemptionModel.findOneAndUpdate({ _id: ObjectId(rejectedRedemptionDto.redemptionid) },
-      { $set: { rejected: { ...rejected, rejectedAt: new Date() }, status: 'Rejected' } },
+    const current: any = await this.redemptionModel.findById(redemptionid).lean();
+    if (!current) throw new BadRequestException("Redemption Not found");
+    this.assertNotPaidByCashfree(current);
+
+    const redemption = await this.redemptionModel.findOneAndUpdate({ _id: ObjectId(redemptionid) },
+      { $set: { rejected: { ...rejected, rejectedAt: new Date() }, status: 'Rejected', statusUpdatedAt: new Date() } },
       { new: true, useFindAndModify: false }
-    )
-      .then(async (redemption) => {
-        if (!redemption) throw new BadRequestException("Redemption Not found");
-        const findRedemption = await this.redemptionModel.aggregate([
-          { $match: { _id: ObjectId(rejectedRedemptionDto.redemptionid) } },
-          {
-            $lookup: {
-              from: "customers",
-              localField: "customerid",
-              foreignField: "_id",
-              pipeline: [
-                { $project: { _id: 1, firmName: 1, deviceInfo: 1, } }
-              ],
-              as: "customerInfo",
-            },
-          },
-          { $unwind: { "path": "$customerInfo", "preserveNullAndEmptyArrays": true } },
-          {
-            $project: {
-              firmName: { $ifNull: ["$customerInfo.firmName", ""] },
-              deviceToken: { $ifNull: ["$customerInfo.deviceInfo.deviceToken", ""] },
-            }
-          }
-
-        ])
-        if (findRedemption.length > 0) {
-          if (findRedemption) {
-
-            await PushNotification(`${findRedemption[0].deviceToken}`, " Redemption is Rejected  🚫", `${findRedemption[0].firmName}, your redemption is rejected`, "Redeem History");
-
-          }
-        }
-        if (redemption.transactionid) {
-          await this.transactionModel.findOneAndUpdate({ _id: redemption.transactionid }, { $set: { points: 0 } }, { new: true, upsert: true, setDefaultsOnInsert: false }).lean();
-        }
-        return new GetRedemptionInfoDto(redemption)
-      });
+    );
+    if (redemption.transactionid) {
+      await this.transactionModel.updateOne({ _id: redemption.transactionid }, { $set: { points: 0 } });
+    }
+    await this.notifyCustomer(redemption.customerid, " Redemption is Rejected  🚫", (name) => `${name}, your redemption is rejected`);
+    return new GetRedemptionInfoDto(redemption)
   };
-  async addBeneficiary(token: string, beneficiaryData: any): Promise<any> {
-    try {
-      const response = await axios.post(
-        "https://payout-api.cashfree.com/payout/v1/addBeneficiary",
-        beneficiaryData,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json"
-          }
-        }
-      );
-
-      return response.data;
-    } catch (error) {
-      console.error("Error adding beneficiary:", error.response ? error.response.data : error);
-      return null;
-    }
-  }
-
-
-  // to initiate a transfer
-  public async initiateTransfer(transferDetails) {
-    try {
-      const response = await this.payoutsInstance.transfer.initiate(transferDetails);
-      console.log('Transfer Initiated:', response);
-      return response;
-    } catch (error) {
-      console.error('Error initiating transfer:', error);
-      throw error;
-    }
-  }
 
   public async transferRedemption(paymentRedemptionDto: TransferRedemptionDto): Promise<any> {
+    const { redemptionid, status } = paymentRedemptionDto
+    const current: any = await this.redemptionModel.findById(redemptionid).lean();
+    if (!current) throw new BadRequestException("Redemption Not found");
 
-    const { redemptionid, status, ...payment } = paymentRedemptionDto
-    return await this.redemptionModel.findOneAndUpdate({ _id: ObjectId(paymentRedemptionDto.redemptionid) },
-      { $set: { "payment.paidBy": paymentRedemptionDto.paidBy, "payment.transactionID": paymentRedemptionDto.transactionID, "payment.details": paymentRedemptionDto.details, "payment.paymentDate": new Date(), status: paymentRedemptionDto.status } },
+    if (status == "UNDER PROCESS") {
+      // Pay through Cashfree; final Success / Rejected and the UTR come from the status cron
+      await this.redemptionModel.updateOne({ _id: current._id }, { $set: { "payment.paidBy": paymentRedemptionDto.paidBy, "payment.details": paymentRedemptionDto.details } });
+      await this.startCashfreePayout(current._id);
+      return new GetRedemptionInfoDto(await this.redemptionModel.findById(current._id));
+    }
+
+    if (status == "Rejected" || status == "Fail") this.assertNotPaidByCashfree(current);
+
+    // Paid outside Cashfree: record what the CRM user entered
+    const redemption = await this.redemptionModel.findOneAndUpdate({ _id: ObjectId(redemptionid) },
+      { $set: { "payment.paidBy": paymentRedemptionDto.paidBy, "payment.transactionID": paymentRedemptionDto.transactionID, "payment.details": paymentRedemptionDto.details, "payment.paymentDate": new Date(), status, statusUpdatedAt: new Date() } },
       { new: true, useFindAndModify: false }
-    )
-      .then(async (redemption) => {
-        if (!redemption) throw new BadRequestException("Redemption Not found");
-        const findRedemption = await this.redemptionModel.aggregate([
-          { $match: { _id: ObjectId(paymentRedemptionDto.redemptionid) } },
-          {
-            $lookup: {
-              from: "customers",
-              localField: "customerid",
-              foreignField: "_id",
-              pipeline: [
-                { $project: { _id: 1, firmName: 1, deviceInfo: 1, benifresiry: 1 } }
-              ],
-              as: "customerInfo",
-            },
-          },
-          { $unwind: { "path": "$customerInfo", "preserveNullAndEmptyArrays": true } },
-          {
-            $project: {
-              firmName: { $ifNull: ["$customerInfo.firmName", ""] },
-              deviceToken: { $ifNull: ["$customerInfo.deviceInfo.deviceToken", ""] },
-              type: { $ifNull: ["$type", ""] },
-              upiBeneficiaryId: { $ifNull: ["$customerInfo.benifresiry.upiBeneficiaryId", ""] },
-              bankAccountBeneficiaryId: { $ifNull: ["$customerInfo.benifresiry.bankAccountBeneficiaryId", ""] },
-              payment: { $ifNull: ["$payment", ""] },
-            }
-          }
-
-        ])
-
-
-        let reqBody = {
-          transfer_id: redemptionid, // Unique Transfer ID
-          transfer_amount: findRedemption[0].payment.amount, // ₹1 transfer
-          beneficiary_details: { beneficiary_id: findRedemption[0]?.bankAccountBeneficiaryId }, // Redemption ID as Beneficiary
-          transfer_mode: 'banktransfer'
-        }
-        if (findRedemption[0].type == "UPI") {
-          reqBody = {
-            transfer_id: redemptionid, // Unique Transfer ID
-            transfer_amount: findRedemption[0].payment.amount, // ₹1 transfer
-            beneficiary_details: { beneficiary_id: findRedemption[0].upiBeneficiaryId }, // Redemption ID as Beneficiary
-            transfer_mode: 'upi'
-          }
-        }
-        if (findRedemption.length > 0) {
-          if (paymentRedemptionDto.status == "Success" || paymentRedemptionDto.status == "UNDER PROCESS") {
-            try {
-              await PushNotification(`${findRedemption[0].deviceToken}`, "Redemption is Success", `${findRedemption[0].firmName},  your redemption is Success`, "Redeem History");
-
-            } catch (error) {
-              console.log(error);
-
-            }
-            if (paymentRedemptionDto.status == "UNDER PROCESS") {
-              try {
-                const response = await axios.post(
-                  "https://api.cashfree.com/payout/transfers",
-                  reqBody,
-                  {
-                    headers: {
-                      // Authorization: `Bearer ${token}`,
-                      "x-client-id": process.env.CASHFREE_CLIENT_ID,
-                      "x-client-secret": process.env.CASHFREE_CLIENT_SECRET,
-                      "X-Api-Version": "2024-01-01",
-                      "Content-Type": "application/json"
-                    },
-                  }
-                );
-                console.log(response.data);
-              } catch (error) {
-                console.error("Error initiating transfer:", error);
-              }
-            }
-
-          } else if (paymentRedemptionDto.status == "Fail") {
-            await PushNotification(`${findRedemption[0].deviceToken}`, "Redemption is Fail", `${findRedemption[0].firmName},  your redemption is Fail`, "Redeem History");
-          }
-        }
-        return new GetRedemptionInfoDto(redemption)
-      });
+    );
+    if (status == "Success") {
+      await this.notifyCustomer(redemption.customerid, "Redemption is Success", (name) => `${name},  your redemption is Success`);
+    } else if (status == "Fail") {
+      await this.notifyCustomer(redemption.customerid, "Redemption is Fail", (name) => `${name},  your redemption is Fail`);
+    }
+    return new GetRedemptionInfoDto(redemption)
   };
 
   public async getNewRefNoRedemption(): Promise<number> {

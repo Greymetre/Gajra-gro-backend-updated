@@ -61,6 +61,8 @@ export class RedemptionController {
   protected async NeftRedemption(@Req() req: Request, @Body() neftRedemptionDto: CreateNeftRedemptionDto): Promise<SuccessResponse<any>> {
     const authInfo = await getCustomerAuthInfo(req.headers)
       neftRedemptionDto.customerid = authInfo._id
+      // only the CRM may create admin redemptions
+      neftRedemptionDto.isAdmin = false
       const data = await this.redemptionService.redemptionViaNeft(neftRedemptionDto);
       return { data };
   };
@@ -74,6 +76,8 @@ export class RedemptionController {
   protected async UpiRedemption(@Req() req: Request, @Body() upiRedemptionDto: CreateUpiRedemptionDto): Promise<SuccessResponse<any>> {
     const authInfo = await getCustomerAuthInfo(req.headers)
     upiRedemptionDto.customerid = authInfo._id
+    // only the CRM may create admin redemptions
+    upiRedemptionDto.isAdmin = false
       const data = await this.redemptionService.redemptionViaUpi(upiRedemptionDto);
       return { data };
   };

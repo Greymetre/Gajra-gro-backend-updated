@@ -67,6 +67,17 @@ export class CronService {
     }
   }
 
+  // Cashfree payouts marked Success can be reversed by the bank later
+  @Cron('15 * * * *')
+  async cronJobForCashfreeReversals() {
+    if (process.env.ENABLE_CRON_JOBS === 'false') return;
+    try {
+      await this.cronHelper.checkCashfreeReversals();
+    } catch (error) {
+      console.error('Error in the Cashfree reversal cron:', error?.message);
+    }
+  }
+
   @Cron('* * * * *')
   async cronJobForGajraGro() {
     if (process.env.ENABLE_CRON_JOBS === 'false') return;

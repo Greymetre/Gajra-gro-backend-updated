@@ -54,7 +54,6 @@ export enum STATUS {
 export enum JWTCLIENTSECRET {
   JWT_DOMAIN = 'dev-jc6z8bvz.us.auth0.com',
   JWT_CLIENT_ID = 'lfhXgbNDNfFiwv4sz6a9rlbJqQyLQmOO',
-  JWT_SECRET = 'p0tqtyABB81gnQbJgISa3Vj_T7_8t7-qwijLkf1t-tz1Maeyjn3KDh_w3yLsg6ZP',
   JWT_TOKEN_EXPIRESIN = '2 days',
 }
 

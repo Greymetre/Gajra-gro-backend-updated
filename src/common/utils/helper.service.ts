@@ -14,6 +14,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { v4 as uuid } from 'uuid';
 import axios from "axios";
+import { getCashfreeTransferStatus } from "./cashfree-payout";
 import { sfaRequestConfig, sfaUrl } from './sfa-client';
 import { syncCustomersFromSfa } from './sfa-customer-sync';
 import { syncAllProductPricesToSfa } from './sfa-product-sync';
@@ -446,31 +447,86 @@ export class CronHelper {
     return refreshMechanicCategories(this.customerModel, this.transactionModel);
   };
 
-  public async checkCashfreeOrderStatus() {
-    this.redemptionModel.find({ status: "UNDER PROCESS" }).then(async (redemptions) => {
-      for await (let redemption of redemptions) {
-        try {
-          const orderStatus = await axios.get(`https://api.cashfree.com/payout/transfers?transfer_id=${redemption._id}`, {
-            headers: {
-              'x-client-id': process.env.CASHFREE_CLIENT_ID,
-              'x-client-secret': process.env.CASHFREE_CLIENT_SECRET,
-              "X-Api-Version": "2024-01-01",
-              "Content-Type": "application/json"
-            },
-          });
-          if (orderStatus.data.status == "SUCCESS") {
-            await this.redemptionModel.findByIdAndUpdate(redemption._id, { status: "Success", 'payment.transactionID': orderStatus.data.transfer_utr, 'payment.paymentDate': orderStatus.data.added_on, 'payment.fundSource': orderStatus.data.fundsource_id }, { new: true, useFindAndModify: false });
-          }
-          if (orderStatus.data.status == "Rejected" || orderStatus.data.status == "FAILED" || orderStatus.data.status == 'REJECTED') {
-            await this.redemptionModel.findByIdAndUpdate(redemption._id, { status: "Rejected","payment.details":orderStatus?.data?.message ? orderStatus?.data?.message : null}, { new: true, useFindAndModify: false });
-          }
-          console.log(orderStatus.data);
-        } catch (error) {
-          console.log(error);
+  private cashfreeCheckRunning = false;
 
+  private async rejectCashfreeRedemption(redemption: any, reason: string) {
+    const updated = await this.redemptionModel.findOneAndUpdate(
+      { _id: redemption._id, status: redemption.status },
+      { $set: { status: "Rejected", "payment.details": String(reason || '').slice(0, 500), statusUpdatedAt: new Date() } },
+      { new: true, useFindAndModify: false },
+    );
+    if (!updated) return;
+    // rejected redemptions do not count against the balance, so the points are returned
+    if (updated.transactionid) {
+      await this.transactionModel.updateOne({ _id: updated.transactionid }, { $set: { points: 0 } });
+    }
+    await this.notifyRedemptionCustomer(updated.customerid, " Redemption is Rejected  🚫", "your redemption is rejected");
+  }
+
+  private async notifyRedemptionCustomer(customerid: any, title: string, message: string) {
+    try {
+      const customer: any = await this.customerModel.findById(customerid, { firmName: 1, deviceInfo: 1 }).lean();
+      if (customer) await PushNotification(`${customer?.deviceInfo?.deviceToken || ''}`, title, `${customer.firmName || ''}, ${message}`, "Redeem History");
+    } catch (error) {
+      // notifications are best effort
+    }
+  }
+
+  // Every minute: settle redemptions whose Cashfree transfer is in process
+  public async checkCashfreeOrderStatus() {
+    if (this.cashfreeCheckRunning) return;
+    this.cashfreeCheckRunning = true;
+    try {
+      const redemptions = await this.redemptionModel.find({ status: "UNDER PROCESS" }).lean();
+      for (const redemption of redemptions) {
+        try {
+          const transfer = await getCashfreeTransferStatus(String(redemption._id));
+          if (!transfer.found) {
+            // The transfer call never reached Cashfree. Give in-flight requests time, then return the points.
+            const startedAt = new Date((redemption as any).statusUpdatedAt || redemption.createdAt || 0).getTime();
+            if (Date.now() - startedAt > 30 * 60 * 1000) {
+              await this.rejectCashfreeRedemption(redemption, "Transfer not found at Cashfree");
+            }
+            continue;
+          }
+          if (transfer.status === "SUCCESS") {
+            const updated = await this.redemptionModel.findOneAndUpdate(
+              { _id: redemption._id, status: "UNDER PROCESS" },
+              { $set: { status: "Success", statusUpdatedAt: new Date(), 'payment.transactionID': transfer.utr, 'payment.paymentDate': transfer.addedOn, 'payment.fundSource': transfer.fundSource } },
+              { new: true, useFindAndModify: false },
+            );
+            if (updated) await this.notifyRedemptionCustomer(updated.customerid, "Redemption is Success", "your redemption is Success");
+          } else if (["FAILED", "REJECTED", "REVERSED"].includes(transfer.status)) {
+            await this.rejectCashfreeRedemption(redemption, transfer.description || transfer.status);
+          }
+          // RECEIVED / PENDING / QUEUED / APPROVAL_PENDING: still in process, check again next minute
+        } catch (error) {
+          console.error(`Cashfree status check for redemption ${redemption._id} failed: ${error?.message}`);
         }
       }
-    })
+    } finally {
+      this.cashfreeCheckRunning = false;
+    }
+  }
+
+  // Hourly: a SUCCESS transfer can later be REVERSED by the bank. Recheck the last 7 days of Cashfree payouts.
+  public async checkCashfreeReversals() {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const redemptions = await this.redemptionModel.find({
+      status: "Success",
+      'payment.fundSource': { $exists: true, $ne: '' },
+      statusUpdatedAt: { $gte: since },
+    }).lean();
+    for (const redemption of redemptions) {
+      try {
+        const transfer = await getCashfreeTransferStatus(String(redemption._id));
+        if (transfer.found && transfer.status === "REVERSED") {
+          await this.rejectCashfreeRedemption(redemption, transfer.description || "Reversed by bank");
+        }
+      } catch (error) {
+        console.error(`Cashfree reversal check for redemption ${redemption._id} failed: ${error?.message}`);
+      }
+    }
   }
 }
 

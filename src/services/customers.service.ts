@@ -35,7 +35,7 @@ import { PaginationRequestDto } from "src/dto/pagination-dto";
 import { CustomerIdDTO } from "src/dto/dashboard-dto";
 import { CustomerViewInterface } from "src/interfaces/customer.interface";
 import { AddRemarkDTO } from "src/loyalty/remark/dto/request-remark.dto";
-import { Payouts } from '@cashfreepayments/cashfree-sdk';
+import { deleteCashfreeBeneficiary } from 'src/common/utils/cashfree-payout';
 import { verify } from "crypto";
 // Google Play review account: fixed OTP, no SMS sent
 const PLAY_REVIEW_MOBILE = process.env.PLAY_REVIEW_MOBILE || '9303142046';
@@ -43,7 +43,6 @@ const PLAY_REVIEW_OTP = parseInt(process.env.PLAY_REVIEW_OTP || '1234');
 
 @Injectable()
 export class CustomersService {
-  private payoutsInstance: Payouts;
   constructor(
     @InjectModel(Customer.name) private customerModel: Model<CustomerDocument>,
     @InjectModel(SettingCustomer.name) private settingCustomerModel: Model<SettingCustomerDocument>,
@@ -53,14 +52,6 @@ export class CustomersService {
     @InjectModel(OtpLog.name) private otpLogModel: Model<OtpLogDocument>,
     @InjectModel(Remark.name) private remarkModel: Model<RemarkDocument>
   ) {
-    this.payoutsInstance = new Payouts({
-      env: 'PRODUCTION',
-      clientId: process.env.CASHFREE_CLIENT_ID, // Replace with your Client ID
-      clientSecret: process.env.CASHFREE_CLIENT_SECRET, // Replace with your Client Secret
-      // Optional: For dynamic IPs, provide path to public key or publicKey string
-      // pathToPublicKey: '/path/to/your/public/key/file.pem',
-      // publicKey: '<YOUR_PUBLIC_KEY>',
-    });
   }
   public async userLogin(loginDto: LoginRequestDto): Promise<LoginResponseDto> {
     const user = await this.customerModel.findOne({ $or: [{ email: loginDto.username }, { mobile: loginDto.username }], }).select(
@@ -3080,23 +3071,7 @@ export class CustomersService {
   };
 
   public async deleteBenifresiry(beneficiaryId) {
-    try {
-      const response = await axios.delete(
-        "https://api.cashfree.com/payout/beneficiary?beneficiary_id=" + beneficiaryId,
-        {
-          headers: {
-            // Authorization: `Bearer ${token}`,
-            "x-client-id": process.env.CASHFREE_CLIENT_ID,
-            "x-client-secret": process.env.CASHFREE_CLIENT_SECRET,
-            "X-Api-Version": "2024-01-01",
-            "Content-Type": "application/json"
-          },
-        }
-      );
-      console.error(response.data);
-    } catch (error) {
-      console.error("Error initiating transfer:", error);
-    }
+    await deleteCashfreeBeneficiary(beneficiaryId);
   }
 
   public async updateCustomerBankInfo(bankInfoDto: BankInfoDTO, customerid, upiInfo: UpiInfoDTO): Promise<any> {

@@ -11,7 +11,6 @@ import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import * as jwt from 'jsonwebtoken';
 import { Request } from 'express';
-import { JWTCLIENTSECRET } from '../../common/constants/index';
 
 const ObjectId = require('mongoose').Types.ObjectId;
 
@@ -34,7 +33,7 @@ export class AuthService {
     try {
       delete user['password'];
       const payload: CustomerJwtTokenInterface = JSON.parse(JSON.stringify(user));
-      const token = await jwt.sign(payload, JWTCLIENTSECRET.JWT_SECRET, {
+      const token = await jwt.sign(payload, process.env.JWT_SECRET, {
         expiresIn: process.env.JWT_EXPIRED_TIME,
       });
       //const token = await this.jwtService.sign(payload);
