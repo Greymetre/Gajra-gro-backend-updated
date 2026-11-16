@@ -123,6 +123,11 @@ export class StatusCouponDtos {
   @Transform(({ value }) => value.toString())
   selectedSchemeid: ObjectId;
 
+  // points of the ticked row, to pick the right line when a scheme lists the product more than once
+  @IsNumber()
+  @IsOptional()
+  selectedPoints: number;
+
   
   @ApiProperty()
   @IsNumber()

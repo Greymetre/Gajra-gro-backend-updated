@@ -992,6 +992,7 @@ export class TransactionsService {
     customer: any;
     productid: any;
     schemeid: any;
+    selectedPoints?: number;
     createdBy: any;
     transactionDate?: Date;
   }): Promise<any[]> {
@@ -1010,10 +1011,12 @@ export class TransactionsService {
     if (!Array.isArray(scheme.customerType) || !scheme.customerType.includes(customerInfo.customerType)) {
       throw new BadRequestException(`Selected scheme is not for ${customerInfo.customerType}`);
     }
-    const matchedProducts = (scheme.schemeDetail || []).find((detail) =>
+    const productLines = (scheme.schemeDetail || []).filter((detail) =>
       Array.isArray(detail.products) &&
       detail.products.some((productid) => productid.toString() === product._id.toString())
     );
+    // the ticked row's points pick the line when the scheme lists this product more than once
+    const matchedProducts = productLines.find((detail) => Number(detail.points) === Number(params.selectedPoints)) || productLines[0];
     const schemePoints = matchedProducts ? Number(matchedProducts.points) : 0;
     if (!matchedProducts || !schemePoints) {
       throw new BadRequestException('Selected product is not part of the selected scheme');
@@ -2448,6 +2451,7 @@ export class TransactionsService {
                   couponCode: statusCouponDto.couponCode,
                   productid: statusCouponDto.productid,
                   schemeid: statusCouponDto.selectedSchemeid,
+                  selectedPoints: statusCouponDto.selectedPoints,
                   customer: findCustomer,
                   createdBy: authInfo._id,
                   transactionDate,
