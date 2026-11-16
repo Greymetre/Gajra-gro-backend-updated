@@ -117,6 +117,12 @@ export class StatusCouponDtos {
   @Transform(({ value }) => value.toString())
   schemeid: ObjectId;
 
+  // Scheme row ticked in the damage entry: only that scheme's points are given
+  @IsMongoId()
+  @IsOptional()
+  @Transform(({ value }) => value.toString())
+  selectedSchemeid: ObjectId;
+
   
   @ApiProperty()
   @IsNumber()

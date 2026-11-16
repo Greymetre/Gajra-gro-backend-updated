@@ -986,6 +986,62 @@ export class TransactionsService {
     return transactions;
   }
 
+  // Damage entry approved against one scheme row picked in the CRM: one transaction with that scheme's points
+  private async buildApprovalTransactionForScheme(params: {
+    couponCode: string;
+    customer: any;
+    productid: any;
+    schemeid: any;
+    createdBy: any;
+    transactionDate?: Date;
+  }): Promise<any[]> {
+    if (!params.productid || !ObjectId.isValid(params.productid)) {
+      throw new BadRequestException('Please select a product');
+    }
+    const product = await this.productModel.findOne({ _id: ObjectId(params.productid) });
+    if (!product) {
+      throw new BadRequestException('Product not exist');
+    }
+    const scheme: any = await this.schemeModel.findOne({ _id: ObjectId(params.schemeid) }).lean();
+    if (!scheme) {
+      throw new BadRequestException('Selected scheme not found');
+    }
+    const customerInfo = await this.getCustomerProfileInfo(params.customer._id);
+    if (!Array.isArray(scheme.customerType) || !scheme.customerType.includes(customerInfo.customerType)) {
+      throw new BadRequestException(`Selected scheme is not for ${customerInfo.customerType}`);
+    }
+    const matchedProducts = (scheme.schemeDetail || []).find((detail) =>
+      Array.isArray(detail.products) &&
+      detail.products.some((productid) => productid.toString() === product._id.toString())
+    );
+    const schemePoints = matchedProducts ? Number(matchedProducts.points) : 0;
+    if (!matchedProducts || !schemePoints) {
+      throw new BadRequestException('Selected product is not part of the selected scheme');
+    }
+    const primaryDetail = Array.isArray(product.productDetail)
+      ? product.productDetail.find((detail) => detail.isPrimary) || product.productDetail[0]
+      : null;
+    const mrp = Number(primaryDetail?.mrp || product.points || 0);
+    const points = scheme.basedOn === 'Percentage'
+      ? Math.round((schemePoints / 100) * mrp)
+      : schemePoints;
+
+    return [{
+      coupon: params.couponCode,
+      productid: product._id,
+      customerid: ObjectId(customerInfo._id),
+      schemeid: scheme._id,
+      points,
+      transactionType: 'Cr',
+      refno: await this.getNewRefNoTransaction(),
+      pointType: scheme.schemeName || 'Coupon Scan',
+      modifyByid: params.createdBy,
+      createdBy: params.createdBy,
+      createdAt: params.transactionDate || new Date(),
+      customerType: params.customer.customerType,
+    }];
+  }
+
   async couponScans(couponsScanDTO: AdminCouponsScanDTO, req?: Request): Promise<any> {
     try {
       const setting = await this.projectSettingModel
@@ -2385,15 +2441,25 @@ export class TransactionsService {
               throw new BadRequestException(`Coupon already scan by ${findTransaction[0].firmName},${findTransaction[0].mobile},${findTransaction[0].createdAt}`)
             } else {
 
-              const transactions = await this.buildApprovalTransactionsForActiveSchemes({
-                couponCode: statusCouponDto.couponCode,
-                productid: statusCouponDto.productid,
-                customer: findCustomer,
-                createdBy: authInfo._id,
-                schemeReferenceDate: findInvalidCoupon.createdAt,
-                // Back-dated entry: transaction also goes on the entry date
-                transactionDate: findInvalidCoupon.isBackDated ? findInvalidCoupon.createdAt : undefined,
-              });
+              // Back-dated entry: transaction also goes on the entry date
+              const transactionDate = findInvalidCoupon.isBackDated ? findInvalidCoupon.createdAt : undefined;
+              const transactions = statusCouponDto.selectedSchemeid
+                ? await this.buildApprovalTransactionForScheme({
+                  couponCode: statusCouponDto.couponCode,
+                  productid: statusCouponDto.productid,
+                  schemeid: statusCouponDto.selectedSchemeid,
+                  customer: findCustomer,
+                  createdBy: authInfo._id,
+                  transactionDate,
+                })
+                : await this.buildApprovalTransactionsForActiveSchemes({
+                  couponCode: statusCouponDto.couponCode,
+                  productid: statusCouponDto.productid,
+                  customer: findCustomer,
+                  createdBy: authInfo._id,
+                  schemeReferenceDate: findInvalidCoupon.createdAt,
+                  transactionDate,
+                });
 
               const customerInfo = await this.getCustomerProfileInfo(findCustomer._id);
               await this.handleTransactions(transactions, customerInfo);
