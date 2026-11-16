@@ -35,7 +35,9 @@ export class CashfreeWebhookController {
             this.logger.warn(
                 `Cashfree webhook ignored, signature not verified: signature header ${signature ? 'present' : 'missing'}, ` +
                 `timestamp header ${timestamp ? 'present' : 'missing'}, content-type ${req.headers['content-type'] || '-'}, ` +
-                `raw body ${rawBody ? `${rawBody.length} bytes` : 'missing'}, event ${this.eventType(rawBody)}`,
+                `raw body ${rawBody ? `${rawBody.length} bytes` : 'missing'}, event ${this.eventType(rawBody)}, ` +
+                // header names only (never values), in case Cashfree names the signature headers differently
+                `x-headers [${Object.keys(req.headers || {}).filter((name) => name.startsWith('x-')).join(', ')}]`,
             );
             return { received: false };
         }
