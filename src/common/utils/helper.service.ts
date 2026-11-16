@@ -15,7 +15,7 @@ import { Model } from "mongoose";
 import { v4 as uuid } from 'uuid';
 import axios from "axios";
 import { getCashfreeTransferStatus } from "./cashfree-payout";
-import { syncAccountStatementFromCashfree, transferRowFromApi, upsertStatementRows } from "./cashfree-sync";
+import { getAccountSyncState, syncAccountStatementFromCashfree, transferRowFromApi, upsertStatementRows } from "./cashfree-sync";
 import { CASHFREE_STATEMENT_TYPE, CashfreeStatement, CashfreeStatementDocument } from '../../entities/cashfree-statement.entity';
 import { sfaRequestConfig, sfaUrl } from './sfa-client';
 import { syncCustomersFromSfa } from './sfa-customer-sync';
@@ -487,8 +487,14 @@ export class CronHelper {
 
   // Every 30 minutes: last 2 days of the Cashfree account statement into the Cashfree Report
   public async syncCashfreeAccountStatement() {
-    const result = await syncAccountStatementFromCashfree(this.cashfreeStatementModel, 2, 'cashfree-api');
-    console.log(`Cashfree account statement sync: fetched ${result.fetched}, new ${result.inserted}, updated ${result.updated}`);
+    const started = await syncAccountStatementFromCashfree(this.cashfreeStatementModel, 2, 'cashfree-api');
+    if (!started) return; // a manual sync is running
+    const state = getAccountSyncState();
+    if (state.status === 'failed') {
+      console.error(`Cashfree account statement sync failed: ${state.error}`);
+    } else {
+      console.log(`Cashfree account statement sync: fetched ${state.fetched}, new ${state.inserted}, updated ${state.updated}`);
+    }
   }
 
   // Every minute: settle redemptions whose Cashfree transfer is in process

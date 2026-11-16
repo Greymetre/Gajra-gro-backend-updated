@@ -64,11 +64,19 @@ export class CashfreeStatementController {
         return this.cashfreeStatementService.getExportReport(userId);
     }
 
-    @ApiOperation({ summary: 'Pull the Cashfree account statement through the Cashfree API' })
+    @ApiOperation({ summary: 'Start pulling the Cashfree account statement through the Cashfree API' })
     @Post('sync-account')
     @Header('Cache-Control', 'no-store')
     async syncAccount(@Req() req: Request, @Body() body: { days?: number }) {
         const userId = await this.assertCashfreeAccess(req);
-        return this.cashfreeStatementService.syncAccountStatement(body?.days, userId);
+        return this.cashfreeStatementService.startAccountStatementSync(body?.days, userId);
+    }
+
+    @ApiOperation({ summary: 'Progress of the Cashfree account statement sync' })
+    @Get('sync-status')
+    @Header('Cache-Control', 'no-store')
+    async syncStatus(@Req() req: Request) {
+        await this.assertCashfreeAccess(req);
+        return { data: await this.cashfreeStatementService.getAccountSyncStatus() };
     }
 }

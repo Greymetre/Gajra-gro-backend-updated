@@ -167,32 +167,48 @@ const istDateTime = (date: Date): string => {
     return `${parts.year}-${parts.month}-${parts.day} ${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}:${parts.second}`;
 };
 
-// All account statement rows (credits and debits of the Payouts account) between start and end, every page
-export const fetchCashfreeAccountStatement = async (start: Date, end: Date): Promise<any[]> => {
+// Reads the account statement (credits and debits of the Payouts account) between start and end page by page,
+// handing each page to onPage as it arrives so callers can save progressively. Keep the range short (a day):
+// Cashfree returns only a few rows per page.
+let accountStatementPageLimit: number | null = 100;
+export const fetchCashfreeAccountStatement = async (
+    start: Date,
+    end: Date,
+    onPage: (rows: any[]) => Promise<void>,
+): Promise<number> => {
     const token = await getV1Token();
-    if (!token) throw new Error('Unable to authorize with Cashfree');
-    const rows: any[] = [];
+    if (!token) throw new Error('Unable to authorize with Cashfree (check API keys / server IP whitelisting)');
     let cursor: string | undefined;
-    for (let page = 0; page < 1000; page++) {
+    let total = 0;
+    for (let page = 0; page < 2000; page++) {
+        const request = (limit: number | null) => axios.get(`${CASHFREE_PAYOUT_V1_URL}/accountStatement`, {
+            params: { startTime: istDateTime(start), endTime: istDateTime(end), ...(limit ? { limit } : {}), ...(cursor ? { cursor } : {}) },
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: REQUEST_TIMEOUT_MS,
+        });
         let data: any;
         try {
-            ({ data } = await axios.get(`${CASHFREE_PAYOUT_V1_URL}/accountStatement`, {
-                params: { startTime: istDateTime(start), endTime: istDateTime(end), limit: 100, ...(cursor ? { cursor } : {}) },
-                headers: { Authorization: `Bearer ${token}` },
-                timeout: REQUEST_TIMEOUT_MS,
-            }));
+            ({ data } = await request(accountStatementPageLimit));
+            // Cashfree may refuse a page size it does not support: retry once with its default page size
+            if (data?.status !== 'SUCCESS' && accountStatementPageLimit) {
+                const retry = await request(null);
+                if (retry.data?.status === 'SUCCESS') accountStatementPageLimit = null;
+                data = retry.data;
+            }
         } catch (error) {
             throw new Error(`Cashfree account statement failed: ${cashfreeErrorMessage(error)}`);
         }
         if (data?.status !== 'SUCCESS') {
             throw new Error(`Cashfree account statement failed: ${data?.subCode || ''} ${data?.message || ''}`.trim());
         }
-        rows.push(...(Array.isArray(data?.data?.batches) ? data.data.batches : []));
+        const rows = Array.isArray(data?.data?.batches) ? data.data.batches : [];
+        total += rows.length;
+        if (rows.length) await onPage(rows);
         const next = data?.data?.nextCursor;
         if (!data?.data?.hasNext || !next || next === cursor) break;
         cursor = next;
     }
-    return rows;
+    return total;
 };
 
 // Payout webhook V2: base64(HMAC-SHA256(timestamp + raw body, client secret)) must equal x-webhook-signature.
