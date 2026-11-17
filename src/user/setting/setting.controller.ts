@@ -1,4 +1,7 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, HttpCode, UsePipes, ValidationPipe, Req, UseInterceptors, UploadedFiles } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, HttpCode, UsePipes, ValidationPipe, Req, UseInterceptors, UploadedFiles, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { User, UserDocument } from 'src/entities/users.entity';
 import { SettingService } from 'src/services/setting.service';
 import { ApiBadRequestResponse, ApiForbiddenResponse, ApiInternalServerErrorResponse, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { BannerProjectSettingDTO, ContactSettingDto, GetSettingInfoDto, ImagePathSettingDTO, LoyaltySettingDto, PermissionDto, ProjectSettingDto } from 'src/dto/setting-dto';
@@ -15,7 +18,10 @@ import { YoutubeShortsDto } from 'src/dto/setting-dto';
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @UseInterceptors(TransformInterceptor)
 export class SettingController {
-  constructor(private readonly settingService: SettingService) { }
+  constructor(
+    private readonly settingService: SettingService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+  ) { }
 
   @ApiOperation({ summary: 'Get all Setting' })
   @ApiResponse({ status: 200, description: 'Mobile number is available', type: SettingService })
@@ -181,8 +187,55 @@ export class SettingController {
   @ApiInternalServerErrorResponse({ description: 'Internal server error' })
   @Post('updatePermission')
   @HttpCode(200)
-  protected async updatePermissionSetting(@Body() permissionDto: PermissionDto[]): Promise<any> {
-    return await this.settingService.updatePermissionSetting(permissionDto);
+  protected async updatePermissionSetting(@Req() req: Request, @Body() body: PermissionDto[]): Promise<any> {
+    // Only a CRM user whose own role has permission.update may change roles (app tokens share the JWT secret)
+    const authInfo = await getAuthUserInfo(req.headers);
+    const userId = authInfo?._id ? String(authInfo._id) : '';
+    if (!userId || !Types.ObjectId.isValid(userId) || !(await this.userModel.exists({ _id: userId }))) {
+      throw new ForbiddenException({ isError: true, message: 'Only CRM users can change permissions' });
+    }
+    const current: { role: string; canAccess: string[] }[] = await this.settingService.getRolePermissions();
+    const callerRole = SettingService.findRole(current, authInfo?.userType);
+    if (!callerRole?.canAccess?.includes(PERMISSIONSETTING.PERMISSION_UPDATE)) {
+      throw new ForbiddenException({ isError: true, message: 'You do not have permission to change permissions' });
+    }
+
+    // Clean the list: role names trimmed and unique, only known permissions (plus any the role already had)
+    const known = new Set<string>(Object.values(PERMISSIONSETTING));
+    const items = Array.isArray(body) ? body : Object.values(body || {});
+    if (!items.length || items.length > 50) throw new BadRequestException('Send between 1 and 50 roles');
+    const seen = new Set<string>();
+    const roles = items.map((item: any) => {
+      const role = typeof item?.role === 'string' ? item.role.trim().replace(/\s+/g, ' ') : '';
+      if (!role || role.length > 50) throw new BadRequestException('Every role needs a name (max 50 characters)');
+      const key = role.toLowerCase();
+      if (seen.has(key)) throw new BadRequestException(`Role "${role}" is added twice`);
+      seen.add(key);
+      const before = current.find((r) => String(r?.role || '').trim().toLowerCase() === key);
+      const had = new Set<string>(Array.isArray(before?.canAccess) ? before.canAccess : []);
+      const canAccess = Array.isArray(item?.canAccess) ? item.canAccess : [];
+      return {
+        role,
+        canAccess: Array.from(new Set<string>(canAccess.filter((p: any) => typeof p === 'string' && (known.has(p) || had.has(p))))),
+      };
+    });
+
+    // A role that disappears (removed or renamed) must not leave its users without permissions
+    const removed = current.filter((r) => r?.role && !seen.has(String(r.role).trim().toLowerCase()));
+    for (const role of removed) {
+      const name = String(role.role).trim();
+      const users = await this.userModel.countDocuments({ userType: { $regex: `^\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, $options: 'i' } });
+      if (users) throw new BadRequestException(`Role "${name}" is assigned to ${users} user(s). Move them to another role before removing or renaming it.`);
+    }
+
+    // Nobody can lock themselves out of this page
+    const callerAfter = SettingService.findRole(roles, authInfo?.userType);
+    if (!callerAfter?.canAccess?.includes(PERMISSIONSETTING.PERMISSION_UPDATE)) {
+      throw new BadRequestException('You cannot remove permission.update from your own role');
+    }
+
+    const data = await this.settingService.updatePermissionSetting(roles);
+    return { message: 'Permissions saved', data };
   }
 
   @ApiOperation({ summary: 'Get Scheme Based On' })

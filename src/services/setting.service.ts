@@ -427,45 +427,35 @@ export class SettingService {
     }
   };
 
-  async updatePermissionSetting(permissionDto: PermissionDto[]): Promise<any> {
+  // Saves the full role list. The caller (SettingController) has already checked access and cleaned the list.
+  async updatePermissionSetting(permissions: { role: string; canAccess: string[] }[]): Promise<any> {
     try {
-      return await this.settingModel.findOneAndUpdate({}, { $set: { permissions: Object.values(permissionDto) } }, { new: true, useFindAndModify: false, upsert: true }).then((setting) => {
-        if (!setting) throw new BadRequestException('Error in Seen Welcome');
-        return setting;
-      });
+      const setting = await this.settingModel.findOneAndUpdate({}, { $set: { permissions } }, { new: true, useFindAndModify: false, upsert: true });
+      if (!setting) throw new BadRequestException('Unable to save permissions');
+      return setting.permissions;
     }
     catch (e) {
-      throw new InternalServerErrorException('error while getting product details' + e,);
+      throw new InternalServerErrorException('error while saving permissions');
     }
   };
 
+  // Role of a logged-in user: exact name (case and spaces ignored). Older logins only matched part of the name,
+  // so that is kept as a fallback for a user whose role name has no exact match.
+  static findRole<T extends { role?: string }>(roles: T[], userType: string): T | null {
+    const wanted = String(userType || '').trim().toLowerCase();
+    if (!wanted || !Array.isArray(roles)) return null;
+    const exact = roles.find((item) => String(item?.role || '').trim().toLowerCase() === wanted);
+    if (exact) return exact;
+    return roles.find((item) => String(item?.role || '').toLowerCase().includes(wanted)) || null;
+  }
+
   async getPermissions(userType: string): Promise<any> {
     try {
-      const data = await this.settingModel.aggregate([
-        { $unwind: { "path": "$permissions", "preserveNullAndEmptyArrays": true } },
-        {
-          $match: {
-            $or: [
-              { "permissions.role": { $regex: userType, '$options': 'i' } },
-            ],
-          },
-        },
-        {
-          $project: {
-            _id: 0,
-            role: { $ifNull: ["$permissions.role", ""] },
-            canAccess: { $ifNull: ["$permissions.canAccess", ""] },
-          },
-        }
-      ]).exec()
-      if (!data) {
-        throw new BadRequestException('Data Not Found');
-      }
-      return new GetSettingInfoDto(data[0]);
+      const roles = await this.getRolePermissions();
+      const role = SettingService.findRole(Array.isArray(roles) ? roles : [], userType);
+      return new GetSettingInfoDto({ role: role?.role || '', canAccess: Array.isArray(role?.canAccess) ? role.canAccess : [] });
     } catch (e) {
-      throw new InternalServerErrorException(
-        'error while getting images' + e,
-      );
+      throw new InternalServerErrorException('error while getting permissions');
     }
   };
 

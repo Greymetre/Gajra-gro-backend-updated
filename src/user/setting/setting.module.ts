@@ -5,8 +5,9 @@ import { LoginMiddleware } from 'src/common/middleware/login.middleware';
 import { SettingProject, SettingProjectSchema } from 'src/entities/setting.project.entity';
 import { SettingCustomer, SettingCustomerSchema } from '../../entities/setting.customer.entity';
 import { MongooseModule } from '@nestjs/mongoose'
+import { User, UserSchema } from 'src/entities/users.entity';
 @Module({
-  imports: [ MongooseModule.forFeature([{ name: SettingProject.name, schema: SettingProjectSchema },{ name: SettingCustomer.name, schema: SettingCustomerSchema }])],
+  imports: [ MongooseModule.forFeature([{ name: SettingProject.name, schema: SettingProjectSchema },{ name: SettingCustomer.name, schema: SettingCustomerSchema }, { name: User.name, schema: UserSchema }])],
   controllers: [SettingController],
   providers: [SettingService]
 })
