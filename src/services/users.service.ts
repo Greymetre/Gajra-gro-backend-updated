@@ -51,10 +51,13 @@ export class UsersService {
           mobile: { $ifNull: ["$mobile", null] },
           email: { $ifNull: ["$email", ''] },
           gender: { $ifNull: ["$gender", ''] },
+          userType: { $ifNull: ["$userType", ''] },
           active: { $ifNull: ["$active", false] },
         },
       },
-    ]).exec();
+      // active employees first, then by name
+      { $sort: { active: -1, firstName: 1, lastName: 1, _id: 1 } },
+    ]).collation({ locale: 'en', strength: 2 }).exec();
     if(!users){
       throw new BadRequestException('Data Not Found');
     }
