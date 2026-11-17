@@ -1,3 +1,4 @@
+import { ActiveUserMiddleware } from '../common/middleware/active-user.middleware';
 import {BadRequestException, Injectable,InternalServerErrorException} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -101,7 +102,9 @@ export class UsersService {
       }else{
         delete updateUserDto["password"];
       }
-      return await this.userModel.findByIdAndUpdate(id, updateUserDto)
+      const updated = await this.userModel.findByIdAndUpdate(id, updateUserDto)
+      ActiveUserMiddleware.forget(String(id));
+      return updated;
     }catch (e) {
       throw new InternalServerErrorException('error while getting user details' +e,);
     }
@@ -117,7 +120,9 @@ export class UsersService {
 
   async updateStatus(statusUserDto: StatusUserDto) : Promise<User> {
     try {
-      return await this.userModel.findByIdAndUpdate(statusUserDto.userid, { active : statusUserDto.active},{ new: true, useFindAndModify: false })
+      const user = await this.userModel.findByIdAndUpdate(statusUserDto.userid, { active : statusUserDto.active},{ new: true, useFindAndModify: false })
+      ActiveUserMiddleware.forget(String(statusUserDto.userid));
+      return user;
     }catch (e) {
       throw new InternalServerErrorException('error while getting user details' +e,);
     }

@@ -6,6 +6,7 @@ import { LoginRequestDto, changePasswordRequestDto, passwordRequestDto, CheckUse
 import { LoginResponseDto } from './dto/auth.response.dto';
 import { JwtTokenInterface } from '../../common/interfaces/jwt.token.interface';
 import { generateAuthUserToken, getAuthUserInfo } from '../../common/utils/jwt.helper';
+import { INACTIVE_USER_MESSAGE } from '../../common/middleware/active-user.middleware';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 
@@ -28,6 +29,9 @@ export class AuthService {
       const validate = await bcrypt.compare(loginDto.password, user.password);
       if (!validate) {
         throw new BadRequestException('Invalid email or password.');
+      }
+      if (user.active !== true) {
+        throw new BadRequestException(INACTIVE_USER_MESSAGE);
       }
       try {
         const payload: JwtTokenInterface = {

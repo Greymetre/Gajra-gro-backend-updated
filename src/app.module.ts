@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
+import { ActiveUserMiddleware } from './common/middleware/active-user.middleware';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -62,4 +63,9 @@ import { PackingList, PackingListSchema } from './entities/packing-list.entity';
   controllers: [AppController],
   providers: [AppService, CronService, CronHelper],
 })
-export class AppModule { }
+export class AppModule implements NestModule {
+  // every CRM route (/api/user/...): a user set to Inactive is logged out at once
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(ActiveUserMiddleware).forRoutes({ path: 'user/*', method: RequestMethod.ALL });
+  }
+}
