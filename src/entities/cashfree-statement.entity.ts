@@ -28,3 +28,5 @@ export class CashfreeStatement {
 
 export const CashfreeStatementSchema = SchemaFactory.createForClass(CashfreeStatement);
 CashfreeStatementSchema.index({ statementType: 1, uniqueId: 1 }, { unique: true });
+// Latest row / today's rows on the Cashfree page ("Added On" is "yyyy-mm-ddThh:mm:ss" IST text)
+CashfreeStatementSchema.index({ statementType: 1, 'row.Added On': -1 });

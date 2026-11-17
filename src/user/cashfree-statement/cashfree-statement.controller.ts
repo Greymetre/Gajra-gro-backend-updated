@@ -72,12 +72,20 @@ export class CashfreeStatementController {
         return this.cashfreeStatementService.startAccountStatementSync(body?.days, userId);
     }
 
-    @ApiOperation({ summary: 'Cashfree wallet balance, today\'s payouts and row counts' })
-    @Get('summary')
+    @ApiOperation({ summary: 'Cashfree wallet balance' })
+    @Get('balance')
     @Header('Cache-Control', 'no-store')
-    async summary(@Req() req: Request, @Query('refresh') refresh?: string) {
+    async balance(@Req() req: Request, @Query('refresh') refresh?: string) {
         await this.assertCashfreeAccess(req);
-        return this.cashfreeStatementService.getSummary(refresh === 'true');
+        return this.cashfreeStatementService.getBalance(refresh === 'true');
+    }
+
+    @ApiOperation({ summary: 'Payouts of today in the synced account statement' })
+    @Get('today-payouts')
+    @Header('Cache-Control', 'no-store')
+    async todayPayouts(@Req() req: Request) {
+        await this.assertCashfreeAccess(req);
+        return this.cashfreeStatementService.getTodayPayouts();
     }
 
     @ApiOperation({ summary: 'Progress of the Cashfree account statement sync' })

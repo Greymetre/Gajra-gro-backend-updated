@@ -99,7 +99,11 @@ export const getCashfreeTransferStatus = async (transferId: string): Promise<Tra
     }
 };
 
-const getV1Token = async (): Promise<string | null> => {
+// v1 tokens live a few minutes. Only the balance check reuses one (for 2 minutes), so the page does not
+// log in to Cashfree on every refresh; long-running calls (statement sync) always take a fresh token.
+let v1TokenCache: { token: string; at: number } | null = null;
+const getV1Token = async (timeout = REQUEST_TIMEOUT_MS, reuse = false): Promise<string | null> => {
+    if (reuse && v1TokenCache && Date.now() - v1TokenCache.at < 2 * 60 * 1000) return v1TokenCache.token;
     try {
         const { data } = await axios.post(`${CASHFREE_PAYOUT_V1_URL}/authorize`, {}, {
             headers: {
@@ -108,9 +112,11 @@ const getV1Token = async (): Promise<string | null> => {
                 'X-Api-Version': '2023-08-01',
                 'Content-Type': 'application/json',
             },
-            timeout: REQUEST_TIMEOUT_MS,
+            timeout,
         });
-        return data?.status === 'SUCCESS' ? data?.data?.token : null;
+        const token = data?.status === 'SUCCESS' ? data?.data?.token : null;
+        if (token) v1TokenCache = { token, at: Date.now() };
+        return token;
     } catch (error) {
         console.error('Cashfree authorize failed:', cashfreeErrorMessage(error));
         return null;
@@ -159,16 +165,19 @@ export const deleteCashfreeBeneficiary = async (beneficiaryId: string): Promise<
 };
 
 // Current balance of the Payouts account (v1 getBalance). Amounts are in rupees.
+// Short timeout: the CRM page waits on this call.
+const BALANCE_TIMEOUT_MS = 8000;
 export const getCashfreeBalance = async (): Promise<{ balance: number; availableBalance: number }> => {
-    const token = await getV1Token();
+    const token = await getV1Token(BALANCE_TIMEOUT_MS, true);
     if (!token) throw new Error('Unable to authorize with Cashfree (check API keys / server IP whitelisting)');
     let data: any;
     try {
         ({ data } = await axios.get(`${CASHFREE_PAYOUT_V1_URL}/getBalance`, {
             headers: { Authorization: `Bearer ${token}` },
-            timeout: REQUEST_TIMEOUT_MS,
+            timeout: BALANCE_TIMEOUT_MS,
         }));
     } catch (error) {
+        if (error?.response?.status === 401 || error?.response?.status === 403) v1TokenCache = null;
         throw new Error(`Cashfree balance failed: ${cashfreeErrorMessage(error)}`);
     }
     const balance = Number(data?.data?.balance);

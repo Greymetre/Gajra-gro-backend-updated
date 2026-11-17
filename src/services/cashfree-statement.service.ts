@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { CASHFREE_STATEMENT_TYPE, CashfreeStatement, CashfreeStatementDocument } from '../entities/cashfree-statement.entity';
@@ -33,7 +33,7 @@ const mask = (value: any): string => {
 };
 
 @Injectable()
-export class CashfreeStatementService {
+export class CashfreeStatementService implements OnModuleInit {
     private readonly logger = new Logger(CashfreeStatementService.name);
 
     private readonly uniqueColumn = {
@@ -45,6 +45,11 @@ export class CashfreeStatementService {
         @InjectModel(CashfreeStatement.name) private readonly cashfreeStatementModel: Model<CashfreeStatementDocument>,
         @InjectModel(Redemption.name) private readonly redemptionModel: Model<RedemptionDocument>,
     ) { }
+
+    // Fetch the wallet balance once at startup so the first page load does not wait on Cashfree
+    onModuleInit() {
+        if (process.env.CASHFREE_CLIENT_ID) this.refreshBalance();
+    }
 
     private parseType(statementType: any): CASHFREE_STATEMENT_TYPE {
         const type = String(statementType || '').toUpperCase() as CASHFREE_STATEMENT_TYPE;
@@ -228,52 +233,67 @@ export class CashfreeStatementService {
         }
     }
 
-    // Top of the Cashfree page: wallet balance (live from Cashfree, cached for a minute; falls back to the closing
-    // balance of the latest synced account row), today's payouts and row counts.
+    // Wallet balance on the Cashfree page, live from Cashfree. The last answer is kept: within a minute it is
+    // returned as is; older than that it is still returned at once while a fresh one is fetched in the background,
+    // so the page never waits on Cashfree except the very first time (or when Refresh is pressed).
     private balanceCache: { at: number; balance: number; availableBalance: number } | null = null;
+    private balanceRequest: Promise<void> | null = null;
 
-    async getSummary(refresh = false) {
-        const todayIst = new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
-        const amount = { $convert: { input: '$row.Amount (INR)', to: 'double', onError: 0, onNull: 0 } };
-        const [accountRows, transferRows, latest, today] = await Promise.all([
-            this.cashfreeStatementModel.countDocuments({ statementType: CASHFREE_STATEMENT_TYPE.ACCOUNT }),
-            this.cashfreeStatementModel.countDocuments({ statementType: CASHFREE_STATEMENT_TYPE.TRANSFER }),
-            this.cashfreeStatementModel.find({ statementType: CASHFREE_STATEMENT_TYPE.ACCOUNT, 'row.Added On': { $regex: '^\\d{4}-\\d{2}-\\d{2}' } }, { row: 1 })
-                .sort({ 'row.Added On': -1 }).limit(1).lean(),
-            this.cashfreeStatementModel.aggregate([
-                { $match: { statementType: CASHFREE_STATEMENT_TYPE.ACCOUNT, 'row.Added On': { $regex: `^${todayIst}` } } },
-                { $group: { _id: '$row.Debit/Credit', count: { $sum: 1 }, amount: { $sum: amount } } },
-            ]),
-        ]);
-
-        let live: { balance: number; availableBalance: number; at: string } | null = null;
-        let liveError = '';
-        try {
-            if (refresh || !this.balanceCache || Date.now() - this.balanceCache.at > 60 * 1000) {
-                const result = await getCashfreeBalance();
-                this.balanceCache = { at: Date.now(), ...result };
-            }
-            live = { balance: this.balanceCache.balance, availableBalance: this.balanceCache.availableBalance, at: new Date(this.balanceCache.at).toISOString() };
-        } catch (error) {
-            this.logger.warn(error?.message || 'Cashfree balance failed');
-            liveError = 'Live balance not available right now';
+    private refreshBalance(): Promise<void> {
+        if (!this.balanceRequest) {
+            this.balanceRequest = getCashfreeBalance()
+                .then((result) => { this.balanceCache = { at: Date.now(), ...result }; })
+                .catch((error) => { this.logger.warn(error?.message || 'Cashfree balance failed'); })
+                .finally(() => { this.balanceRequest = null; });
         }
+        return this.balanceRequest;
+    }
 
-        const pick = (type: string) => today.find((row) => String(row._id).toUpperCase() === type) || { count: 0, amount: 0 };
-        const debit = pick('DEBIT');
-        const credit = pick('CREDIT');
-        const latestRow = latest[0]?.row || {};
+    async getBalance(refresh = false) {
+        const fresh = this.balanceCache && Date.now() - this.balanceCache.at < 60 * 1000;
+        if (refresh || !this.balanceCache) await this.refreshBalance();
+        else if (!fresh) this.refreshBalance();
+
+        if (this.balanceCache) {
+            const { at, balance, availableBalance } = this.balanceCache;
+            return { data: { live: true, balance, availableBalance, at: new Date(at).toISOString() } };
+        }
+        // Cashfree did not answer: closing balance of the latest synced account row
+        const latest = await this.cashfreeStatementModel
+            .find({ statementType: CASHFREE_STATEMENT_TYPE.ACCOUNT, 'row.Added On': { $regex: '^\\d{4}-\\d{2}-\\d{2}T' } }, { row: 1 })
+            .sort({ 'row.Added On': -1 }).limit(1).lean();
+        const row = latest[0]?.row;
+        const closing = Number(row?.['Closing Balance (INR)']);
         return {
             data: {
-                live,
-                liveError,
-                statementBalance: latestRow['Closing Balance (INR)'] !== undefined ? Number(latestRow['Closing Balance (INR)']) || 0 : null,
-                statementBalanceAt: latestRow['Added On'] || null,
-                today: { date: todayIst, payouts: debit.count, payoutAmount: debit.amount, topups: credit.count, topupAmount: credit.amount },
-                accountRows,
-                transferRows,
+                live: false,
+                balance: row && Number.isFinite(closing) ? closing : null,
+                availableBalance: row && Number.isFinite(closing) ? closing : null,
+                at: row?.['Added On'] || null,
             },
         };
+    }
+
+    // DEBIT rows of today (IST) in the synced account statement
+    async getTodayPayouts() {
+        const todayIst = new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
+        const [today] = await this.cashfreeStatementModel.aggregate([
+            {
+                $match: {
+                    statementType: CASHFREE_STATEMENT_TYPE.ACCOUNT,
+                    'row.Added On': { $gte: `${todayIst}T00:00:00`, $lte: `${todayIst}T23:59:59` },
+                    'row.Debit/Credit': 'DEBIT',
+                },
+            },
+            {
+                $group: {
+                    _id: null,
+                    count: { $sum: 1 },
+                    amount: { $sum: { $convert: { input: '$row.Amount (INR)', to: 'double', onError: 0, onNull: 0 } } },
+                },
+            },
+        ]);
+        return { data: { date: todayIst, payouts: today?.count || 0, amount: today?.amount || 0 } };
     }
 
     // CRM "Sync from Cashfree": starts pulling up to 31 days of the account statement in the background.
