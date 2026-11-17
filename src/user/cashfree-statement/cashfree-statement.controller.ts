@@ -18,7 +18,8 @@ export class CashfreeStatementController {
 
     // Only CRM roles granted reports.cashfree may call these APIs. The role is matched exactly
     // (case-insensitive), not by regex, so a similarly named role cannot pick up the permission.
-    private async assertCashfreeAccess(req: Request): Promise<string> {
+    // `extra`: a second permission the action needs on top of reports.cashfree (import / export)
+    private async assertCashfreeAccess(req: Request, extra?: PERMISSIONSETTING): Promise<string> {
         const authInfo = await getAuthUserInfo(req.headers);
         const userType = String(authInfo?.userType || '').trim().toLowerCase();
         if (!authInfo?._id || !userType) {
@@ -31,6 +32,10 @@ export class CashfreeStatementController {
         if (!Array.isArray(role?.canAccess) || !role.canAccess.includes(PERMISSIONSETTING.REPORT_CASHFREE)) {
             throw new ForbiddenException({ isError: true, message: 'You do not have access to the Cashfree report' });
         }
+        if (extra && !role.canAccess.includes(extra)) {
+            const action = extra === PERMISSIONSETTING.REPORT_CASHFREE_IMPORT ? 'import' : 'export';
+            throw new ForbiddenException({ isError: true, message: `You do not have permission to ${action} the Cashfree report` });
+        }
         return String(authInfo._id);
     }
 
@@ -38,7 +43,7 @@ export class CashfreeStatementController {
     @Post('import')
     @Header('Cache-Control', 'no-store')
     async importStatement(@Req() req: Request, @Body() body: { statementType?: string; data?: Record<string, any>[] }) {
-        const userId = await this.assertCashfreeAccess(req);
+        const userId = await this.assertCashfreeAccess(req, PERMISSIONSETTING.REPORT_CASHFREE_IMPORT);
         return this.cashfreeStatementService.importStatement(body, userId);
     }
 
@@ -60,7 +65,7 @@ export class CashfreeStatementController {
     @Get('export-report')
     @Header('Cache-Control', 'no-store')
     async exportReport(@Req() req: Request) {
-        const userId = await this.assertCashfreeAccess(req);
+        const userId = await this.assertCashfreeAccess(req, PERMISSIONSETTING.REPORT_CASHFREE_EXPORT);
         return this.cashfreeStatementService.getExportReport(userId);
     }
 
