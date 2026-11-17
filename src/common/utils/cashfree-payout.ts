@@ -158,6 +158,27 @@ export const deleteCashfreeBeneficiary = async (beneficiaryId: string): Promise<
     }
 };
 
+// Current balance of the Payouts account (v1 getBalance). Amounts are in rupees.
+export const getCashfreeBalance = async (): Promise<{ balance: number; availableBalance: number }> => {
+    const token = await getV1Token();
+    if (!token) throw new Error('Unable to authorize with Cashfree (check API keys / server IP whitelisting)');
+    let data: any;
+    try {
+        ({ data } = await axios.get(`${CASHFREE_PAYOUT_V1_URL}/getBalance`, {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: REQUEST_TIMEOUT_MS,
+        }));
+    } catch (error) {
+        throw new Error(`Cashfree balance failed: ${cashfreeErrorMessage(error)}`);
+    }
+    const balance = Number(data?.data?.balance);
+    const availableBalance = Number(data?.data?.availableBalance ?? data?.data?.balance);
+    if (data?.status !== 'SUCCESS' || !Number.isFinite(balance)) {
+        throw new Error(`Cashfree balance failed: ${data?.subCode || ''} ${data?.message || ''}`.trim());
+    }
+    return { balance, availableBalance: Number.isFinite(availableBalance) ? availableBalance : balance };
+};
+
 // Cashfree takes "yyyy-mm-dd hh:mm:ss" in IST for the account statement range
 const istDateTime = (date: Date): string => {
     const parts = new Intl.DateTimeFormat('en-CA', {

@@ -4,6 +4,7 @@ import { Model } from 'mongoose';
 import { CASHFREE_STATEMENT_TYPE, CashfreeStatement, CashfreeStatementDocument } from '../entities/cashfree-statement.entity';
 import { Redemption, RedemptionDocument } from '../entities/redemption.entity';
 import { getAccountSyncState, getLastApiSyncAt, syncAccountStatementFromCashfree } from '../common/utils/cashfree-sync';
+import { getCashfreeBalance } from '../common/utils/cashfree-payout';
 
 const MAX_ROWS_PER_REQUEST = 5000;
 const MAX_CELL_LENGTH = 500;
@@ -225,6 +226,54 @@ export class CashfreeStatementService {
             this.logger.error(`Cashfree report export failed: ${error?.message}`);
             throw new InternalServerErrorException('Error building cashfree report');
         }
+    }
+
+    // Top of the Cashfree page: wallet balance (live from Cashfree, cached for a minute; falls back to the closing
+    // balance of the latest synced account row), today's payouts and row counts.
+    private balanceCache: { at: number; balance: number; availableBalance: number } | null = null;
+
+    async getSummary(refresh = false) {
+        const todayIst = new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
+        const amount = { $convert: { input: '$row.Amount (INR)', to: 'double', onError: 0, onNull: 0 } };
+        const [accountRows, transferRows, latest, today] = await Promise.all([
+            this.cashfreeStatementModel.countDocuments({ statementType: CASHFREE_STATEMENT_TYPE.ACCOUNT }),
+            this.cashfreeStatementModel.countDocuments({ statementType: CASHFREE_STATEMENT_TYPE.TRANSFER }),
+            this.cashfreeStatementModel.find({ statementType: CASHFREE_STATEMENT_TYPE.ACCOUNT, 'row.Added On': { $regex: '^\\d{4}-\\d{2}-\\d{2}' } }, { row: 1 })
+                .sort({ 'row.Added On': -1 }).limit(1).lean(),
+            this.cashfreeStatementModel.aggregate([
+                { $match: { statementType: CASHFREE_STATEMENT_TYPE.ACCOUNT, 'row.Added On': { $regex: `^${todayIst}` } } },
+                { $group: { _id: '$row.Debit/Credit', count: { $sum: 1 }, amount: { $sum: amount } } },
+            ]),
+        ]);
+
+        let live: { balance: number; availableBalance: number; at: string } | null = null;
+        let liveError = '';
+        try {
+            if (refresh || !this.balanceCache || Date.now() - this.balanceCache.at > 60 * 1000) {
+                const result = await getCashfreeBalance();
+                this.balanceCache = { at: Date.now(), ...result };
+            }
+            live = { balance: this.balanceCache.balance, availableBalance: this.balanceCache.availableBalance, at: new Date(this.balanceCache.at).toISOString() };
+        } catch (error) {
+            this.logger.warn(error?.message || 'Cashfree balance failed');
+            liveError = 'Live balance not available right now';
+        }
+
+        const pick = (type: string) => today.find((row) => String(row._id).toUpperCase() === type) || { count: 0, amount: 0 };
+        const debit = pick('DEBIT');
+        const credit = pick('CREDIT');
+        const latestRow = latest[0]?.row || {};
+        return {
+            data: {
+                live,
+                liveError,
+                statementBalance: latestRow['Closing Balance (INR)'] !== undefined ? Number(latestRow['Closing Balance (INR)']) || 0 : null,
+                statementBalanceAt: latestRow['Added On'] || null,
+                today: { date: todayIst, payouts: debit.count, payoutAmount: debit.amount, topups: credit.count, topupAmount: credit.amount },
+                accountRows,
+                transferRows,
+            },
+        };
     }
 
     // CRM "Sync from Cashfree": starts pulling up to 31 days of the account statement in the background.
