@@ -145,13 +145,17 @@ export const getAccountSyncState = (): AccountSyncState => ({ ...accountSync });
 
 // Pulls the account statement for the last `days` days from Cashfree into the report, one day at a time,
 // saving every page as it arrives. Returns false (and does nothing) when a sync is already running.
-// With redemptionModel it then also fetches the Cashfree transfer of every CRM payout in the range that the
-// report does not have yet (the account statement alone has no beneficiary, so names come from transfers).
+// With redemptionModel it then also fetches the Cashfree transfer of every CRM payout that the report does not
+// have yet (the account statement has no beneficiary, so mechanic name / mobile come from transfers).
+// transferOptions.sinceDays: how far back to look for such payouts (default: days + 1);
+// transferOptions.paidOnly: only payouts Cashfree confirmed (Success with a fund source) or in process, as the
+// 30-minute cron does, so it does not ask Cashfree again for payouts that were never sent there.
 export const syncAccountStatementFromCashfree = async (
     model: Model<CashfreeStatementDocument>,
     days: number,
     source: string,
     redemptionModel?: Model<any>,
+    transferOptions: { sinceDays?: number; paidOnly?: boolean } = {},
 ): Promise<boolean> => {
     if (accountSync.status === 'running') return false;
     accountSync = { ...emptySyncState(), status: 'running', source, days, startedAt: new Date(), phase: 'account' };
@@ -172,7 +176,8 @@ export const syncAccountStatementFromCashfree = async (
         }
         if (redemptionModel) {
             accountSync.phase = 'transfers';
-            await backfillTransfers(model, redemptionModel, new Date(end - (days + 1) * dayMs), source);
+            const sinceDays = transferOptions.sinceDays || days + 1;
+            await backfillTransfers(model, redemptionModel, new Date(end - sinceDays * dayMs), source, !!transferOptions.paidOnly);
         }
         accountSync.status = 'success';
     } catch (error) {
@@ -190,6 +195,7 @@ const backfillTransfers = async (
     redemptionModel: Model<any>,
     since: Date,
     source: string,
+    paidOnly: boolean,
 ) => {
     const known = new Set(
         (await model.find(
@@ -200,7 +206,9 @@ const backfillTransfers = async (
     const candidates = (await redemptionModel.find(
         {
             type: { $in: ['UPI', 'IMPS', 'Neft', 'NEFT'] },
-            status: { $in: ['Success', 'UNDER PROCESS', 'Rejected'] },
+            ...(paidOnly
+                ? { $and: [{ $or: [{ status: 'UNDER PROCESS' }, { status: 'Success', 'payment.fundSource': { $exists: true, $nin: ['', null] } }] }] }
+                : { status: { $in: ['Success', 'UNDER PROCESS', 'Rejected'] } }),
             $or: [{ createdAt: { $gte: since } }, { statusUpdatedAt: { $gte: since } }],
         },
         { payment: 1 },

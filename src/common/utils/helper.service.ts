@@ -487,13 +487,15 @@ export class CronHelper {
 
   // Every 30 minutes: last 2 days of the Cashfree account statement into the Cashfree Report
   public async syncCashfreeAccountStatement() {
-    const started = await syncAccountStatementFromCashfree(this.cashfreeStatementModel, 2, 'cashfree-api');
+    // last 2 days of the statement, plus transfer details of any Cashfree-paid payout of the last 31 days the
+    // report still lacks (payouts made before the status cron saved transfers, or missed by the webhook)
+    const started = await syncAccountStatementFromCashfree(this.cashfreeStatementModel, 2, 'cashfree-api', this.redemptionModel, { sinceDays: 31, paidOnly: true });
     if (!started) return; // a manual sync is running
     const state = getAccountSyncState();
     if (state.status === 'failed') {
       console.error(`Cashfree account statement sync failed: ${state.error}`);
     } else {
-      console.log(`Cashfree account statement sync: fetched ${state.fetched}, new ${state.inserted}, updated ${state.updated}`);
+      console.log(`Cashfree account statement sync: fetched ${state.fetched}, new ${state.inserted}, updated ${state.updated}; transfers saved ${state.transfersSaved} of ${state.transfersTotal}`);
     }
   }
 
