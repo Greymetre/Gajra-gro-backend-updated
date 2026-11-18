@@ -1932,6 +1932,11 @@ export class CustomersService {
     }
 
     const setting: any = await this.settingCustomerModel.findOne({ customerid: customer._id }).select('bankInfo upiInfo').lean().exec();
+    return { found: true, groCustomerId: customer._id.toString(), ...this.sfaKycPayload(customer, setting) };
+  };
+
+  // KYC documents of one customer as SFA reads them (customer needs kycInfo, verified, kycChecked; setting bankInfo, upiInfo)
+  private sfaKycPayload(customer: any, setting: any): any {
     const kyc = customer.kycInfo || {};
     const verified = customer.verified || {};
     const bank = setting?.bankInfo || {};
@@ -1944,12 +1949,13 @@ export class CustomersService {
         checked: isVerified || !!c?.checked,
         checkedBy: c?.checked ? str(c.byName) : '',
         checkedAt: c?.checked && c.at ? new Date(c.at).toISOString() : '',
+        approved: !!c?.checked && !!c?.approved,
+        approvedBy: c?.checked && c?.approved ? str(c.approvedByName) : '',
+        approvedAt: c?.checked && c?.approved && c.approvedAt ? new Date(c.approvedAt).toISOString() : '',
       };
     };
 
     return {
-      found: true,
-      groCustomerId: customer._id.toString(),
       gstin: { number: str(kyc.gstinNo), image: str(kyc.gstinImage), verified: !!verified.gstinVerified, ...checkedOf('gstin', !!verified.gstinVerified) },
       pan: { number: str(kyc.panNo), image: str(kyc.panImage), verified: !!verified.panVerified, ...checkedOf('pan', !!verified.panVerified) },
       aadhar: {
@@ -1981,6 +1987,107 @@ export class CustomersService {
         verified: !!verified.upiVerified, ...checkedOf('upi', !!verified.upiVerified),
       },
     };
+  };
+
+  // Gajra Gro users of an SFA user: SFA users are synced to Gajra Gro by mobile (allUsersToGajraMlp)
+  private async groUserIdsBySfaMobile(userMobile: any): Promise<any[]> {
+    const mobile = normalizeMobile(userMobile);
+    if (mobile.length !== 10) {
+      throw new BadRequestException('userMobile is required');
+    }
+    const users: any[] = await this.userModel.find({ mobile: { $in: [Number(mobile), mobile] } } as any).select('_id').lean().exec();
+    return users.map((u: any) => u._id);
+  }
+
+  // KYC documents the sales team has checked in the CRM and that still wait for approval
+  private pendingKycDocs(customer: any): string[] {
+    const checked = customer.kycChecked || {};
+    const verified = customer.verified || {};
+    return ['gstin', 'pan', 'aadhar', 'other', 'bank', 'upi']
+      .filter((doc) => checked[doc]?.checked && !checked[doc]?.approved && !verified[`${doc}Verified`]);
+  }
+
+  /**
+   * SFA app KYC tab: { userMobile } -> customers assigned (Assigned User) to that SFA user on Gajra Gro with a
+   * document checked by the sales team and not approved yet, with their KYC documents.
+   */
+  public async checkedKycCustomersForSfa(body: any): Promise<any> {
+    const userIds = await this.groUserIdsBySfaMobile(body?.userMobile);
+    if (!userIds.length) {
+      return { rows: [], message: 'Your user is not on Gajra Gro yet' };
+    }
+    const customers: any[] = await this.customerModel.find({
+      'userAssign.userid': { $in: userIds },
+      $or: ['gstin', 'pan', 'aadhar', 'other', 'bank', 'upi'].map((doc) => ({ [`kycChecked.${doc}.checked`]: true })),
+    } as any)
+      .select('_id sfaCustomerId firmName contactPerson mobile customerType kycInfo verified kycChecked')
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .lean()
+      .exec();
+    const pending = customers.filter((c) => this.pendingKycDocs(c).length);
+    const settings: any[] = pending.length
+      ? await this.settingCustomerModel.find({ customerid: { $in: pending.map((c) => c._id) } } as any).select('customerid bankInfo upiInfo').lean().exec()
+      : [];
+    const settingOf = new Map(settings.map((st: any) => [String(st.customerid), st]));
+    return {
+      rows: pending.map((c) => ({
+        groCustomerId: c._id.toString(),
+        sfaCustomerId: c.sfaCustomerId || null,
+        firmName: c.firmName || '',
+        contactPerson: c.contactPerson || '',
+        mobile: c.mobile || '',
+        customerType: c.customerType || '',
+        pending: this.pendingKycDocs(c),
+        ...this.sfaKycPayload(c, settingOf.get(c._id.toString())),
+      })),
+    };
+  };
+
+  /**
+   * SFA app KYC tab: { userMobile, groCustomerId, kycdocs, action: approve | reject } by the sales person the
+   * customer is assigned to, on a document the sales team has checked.
+   */
+  public async kycActionFromSfa(body: any): Promise<any> {
+    const doc = String(body?.kycdocs || '');
+    if (!['gstin', 'pan', 'aadhar', 'other', 'bank', 'upi'].includes(doc)) {
+      throw new BadRequestException('Invalid KYC document');
+    }
+    if (!['approve', 'reject'].includes(body?.action)) {
+      throw new BadRequestException('action must be approve or reject');
+    }
+    if (!body?.groCustomerId || !ObjectId.isValid(body.groCustomerId)) {
+      throw new BadRequestException('groCustomerId is required');
+    }
+    const userIds = await this.groUserIdsBySfaMobile(body?.userMobile);
+    const customer: any = await this.customerModel.findOne({ _id: ObjectId(body.groCustomerId) })
+      .select('_id userAssign kycChecked verified').lean().exec();
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+    const assignedTo = String(customer?.userAssign?.userid || '');
+    if (!userIds.some((id) => String(id) === assignedTo)) {
+      throw new BadRequestException('This customer is not assigned to you');
+    }
+    if (!this.pendingKycDocs(customer).includes(doc)) {
+      throw new BadRequestException('This document is not waiting for approval');
+    }
+
+    if (body.action === 'approve') {
+      // Approved by the sales person; the sales team then verifies it in the CRM (Checked -> Approved -> Verified)
+      const approver: any = await this.userModel.findById(customer.userAssign.userid).select('firstName lastName').lean().exec();
+      await this.customerModel.updateOne({ _id: customer._id }, {
+        $set: {
+          [`kycChecked.${doc}.approved`]: true,
+          [`kycChecked.${doc}.approvedBy`]: customer.userAssign.userid,
+          [`kycChecked.${doc}.approvedByName`]: [approver?.firstName, approver?.lastName].filter(Boolean).join(' '),
+          [`kycChecked.${doc}.approvedAt`]: new Date(),
+        },
+      } as any).exec();
+    } else {
+      await this.kycRejected({ customerid: customer._id, kycdocs: doc } as any);
+    }
+    return { success: true, action: body.action, kycdocs: doc };
   };
 
   /**
@@ -2751,7 +2858,7 @@ export class CustomersService {
           // No "approved" push when an admin un-verifies.
           if (!isVerified) return setting;
           const findCustomer = await this.customerModel.findOne({ _id: ObjectId(kycVerifiedDTO.customerid) })
-          if (findCustomer && findCustomer.deviceInfo.deviceToken) {
+          if (findCustomer && findCustomer.deviceInfo?.deviceToken) {
             const token = findCustomer.deviceInfo.deviceToken
 
             let stringValue = "";
@@ -2796,6 +2903,10 @@ export class CustomersService {
       if (!assigned) {
         throw new BadRequestException('Please assign a sales person to this customer first');
       }
+    }
+    const existing: any = await this.customerModel.findOne({ _id: ObjectId(kycCheckedDTO.customerid) }).select('kycChecked').lean().exec();
+    if (existing?.kycChecked?.[kycCheckedDTO.kycdocs]?.approved) {
+      throw new BadRequestException('This document is already approved by the sales person; verify or reject it');
     }
     const value = checked
       ? {

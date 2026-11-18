@@ -189,10 +189,14 @@ export class Customer {
     upiVerified : { type: Boolean, default: false }
   };
 
-  // Sales team "Checked" mark per KYC document (gstin / pan / aadhar / other / bank / upi), set in the CRM
-  // before approval and shown in SFA. Cleared when that document is rejected or a new image is uploaded.
+  // KYC review per document (gstin / pan / aadhar / other / bank / upi): Checked by the sales team in the CRM ->
+  // Approved by the assigned sales person in the SFA app -> Verified by the sales team in the CRM (verified.*).
+  // Cleared when that document is rejected or a new image is uploaded.
   @Prop({ type: Object, default: {} })
-  kycChecked: Record<string, { checked: boolean; by?: Types.ObjectId; byName?: string; at?: Date } | null>;
+  kycChecked: Record<string, {
+    checked: boolean; by?: Types.ObjectId; byName?: string; at?: Date;
+    approved?: boolean; approvedBy?: Types.ObjectId; approvedByName?: string; approvedAt?: Date;
+  } | null>;
 
   @Prop({ type: Object })
   benifresiry : {

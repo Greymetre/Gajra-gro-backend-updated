@@ -24,6 +24,20 @@ export class SfaSyncController {
     return await this.customersService.customerKycForSfa(body);
   }
 
+  // { userMobile }: customers assigned to that SFA user with KYC documents checked by the sales team, pending approval
+  @Post('kyc/checked-customers')
+  @HttpCode(200)
+  protected async checkedKycCustomers(@Body() body: any) {
+    return await this.customersService.checkedKycCustomersForSfa(body);
+  }
+
+  // { userMobile, groCustomerId, kycdocs, action: approve | reject }: the assigned sales person's decision
+  @Post('kyc/action')
+  @HttpCode(200)
+  protected async kycAction(@Body() body: any) {
+    return await this.customersService.kycActionFromSfa(body);
+  }
+
   // { month: "YYYY-MM" }: every mechanic's points, redeemed points and unique coupon scans of that month
   // or { from: "YYYY-MM-DD", to: "YYYY-MM-DD" }: the same for those days
   @Post('mechanics/monthly-summary')
