@@ -2783,6 +2783,20 @@ export class CustomersService {
   // CRM "Checked" checkbox: the sales team has checked this KYC document (before / without approving it)
   public async kycChecked(kycCheckedDTO: KycCheckedDTO, authInfo: any): Promise<any> {
     const checked = kycCheckedDTO.checked === true;
+    // A document can be checked only once a sales person (Assigned User) is assigned to the customer;
+    // un-checking is always allowed
+    if (checked) {
+      const current: any = await this.customerModel.findOne({ _id: ObjectId(kycCheckedDTO.customerid) }).select('userAssign').lean().exec();
+      if (!current) {
+        throw new NotFoundException('Customer not found');
+      }
+      const assignedId = current?.userAssign?.userid ? String(current.userAssign.userid) : '';
+      const assigned = ObjectId.isValid(assignedId)
+        && await this.customerModel.db.collection('users').countDocuments({ _id: ObjectId(assignedId) }, { limit: 1 }) > 0;
+      if (!assigned) {
+        throw new BadRequestException('Please assign a sales person to this customer first');
+      }
+    }
     const value = checked
       ? {
         checked: true,
