@@ -13,7 +13,7 @@ import { PaginationRequestDto } from 'src/dto/pagination-dto';
 import { CustomerIdDTO } from 'src/dto/dashboard-dto';
 import { UpiVerifiedDTO } from 'src/dto/bank-info-dto';
 import { getAuthUserInfo } from 'src/common/utils/jwt.helper';
-import { CustomerIdArrayDTO, CustomerListWithStatusDTO, CustomersImportDto, FilterPaginationCustomerDto, KycRejectDTO, KycVerifiedDTO } from 'src/dto/customer-dto';
+import { CustomerIdArrayDTO, CustomerListWithStatusDTO, CustomersImportDto, FilterPaginationCustomerDto, KycCheckedDTO, KycRejectDTO, KycVerifiedDTO } from 'src/dto/customer-dto';
 import { LoginResponseDto } from '../auth/dto/auth.response.dto';
 import { CustomerKycInfoDTO } from 'src/dto/kyc-info-dto';
 import { AddRemarkDTO } from 'src/loyalty/remark/dto/request-remark.dto';
@@ -330,6 +330,15 @@ export class CustomersController {
     const data = await this.customersService.kycVerified(kycVerifiedDTO);
     return { data };
   }
+  @ApiOperation({ summary: 'Mark a KYC document as checked by the sales team' })
+  @Post('kycChecked')
+  @HttpCode(200)
+  protected async kycChecked(@Req() req: Request, @Body() kycCheckedDTO: KycCheckedDTO): Promise<SuccessResponse<any>> {
+    const authInfo = await getAuthUserInfo(req.headers);
+    const data = await this.customersService.kycChecked(kycCheckedDTO, authInfo);
+    return { data };
+  }
+
   @ApiOperation({ summary: 'verified Kyc' })
   @ApiResponse({ status: 200, description: 'Success', type: GetCustomerInfoDto })
   @Post('kycRejected')

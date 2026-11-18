@@ -16,7 +16,7 @@ import { changePasswordRequestDto, CreatePasswordRequestDto, EmailRequestDto, Lo
 import { LoginResponseDto } from "src/loyalty/auth/dto/auth.response.dto";
 const ObjectId = require("mongoose").Types.ObjectId;
 import * as jwt from "jsonwebtoken";
-import { CustomerAvatarDto, CustomerDto, CustomerIdArrayDTO, CustomerListWithStatusDTO, CustomerPersonalDetailsDto, CustomersImportDto, FilterPaginationCustomerDto, KycRejectDTO, KycVerifiedDTO, } from "src/dto/customer-dto";
+import { CustomerAvatarDto, CustomerDto, CustomerIdArrayDTO, CustomerListWithStatusDTO, CustomerPersonalDetailsDto, CustomersImportDto, FilterPaginationCustomerDto, KycCheckedDTO, KycRejectDTO, KycVerifiedDTO, } from "src/dto/customer-dto";
 import { CustomerSurveyDataDTO } from "src/dto/survey-data-dto";
 import { SettingCustomer, SettingCustomerDocument, } from "src/entities/setting.customer.entity";
 import { SettingProject, SettingProjectDocument, } from "src/entities/setting.project.entity";
@@ -1252,6 +1252,7 @@ export class CustomersService {
               ifsc: { $ifNull: ["$settingCustomerInfo.bankInfo.ifsc", ""] },
               upiNumber: { $ifNull: ["$settingCustomerInfo.upiInfo.upiNumber", ""] },
               upiImage: { $ifNull: ["$kycInfo.upiImage", ""] },
+              kycChecked: { $ifNull: ["$kycChecked", {}] },
               active: { $ifNull: ["$active", false] },
               // Latest remark matching the current status (active -> last
               // "active" remark, inactive -> last "inactive" remark).
@@ -1543,28 +1544,28 @@ export class CustomersService {
       // Only a newly uploaded image replaces (and un-verifies) a document; a
       // side that wasn't re-uploaded keeps its stored image.
       if (customerKycDto.aadharFrontImage) {
-        customerToUpdate.set({ "verified.aadharVerified": false, "kycInfo.aadharFrontImage": customerKycDto.aadharFrontImage });
+        customerToUpdate.set({ "verified.aadharVerified": false, "kycChecked.aadhar": null, "kycInfo.aadharFrontImage": customerKycDto.aadharFrontImage });
       }
       if (customerKycDto.aadharBackImage) {
-        customerToUpdate.set({ "verified.aadharVerified": false, "kycInfo.aadharBackImage": customerKycDto.aadharBackImage });
+        customerToUpdate.set({ "verified.aadharVerified": false, "kycChecked.aadhar": null, "kycInfo.aadharBackImage": customerKycDto.aadharBackImage });
       }
       if (customerKycDto.gstinImage) {
-        customerToUpdate.set({ "verified.gstinVerified": false, "kycInfo.gstinImage": customerKycDto.gstinImage });
+        customerToUpdate.set({ "verified.gstinVerified": false, "kycChecked.gstin": null, "kycInfo.gstinImage": customerKycDto.gstinImage });
       }
       if (customerKycDto.panImage) {
-        customerToUpdate.set({ "verified.panVerified": false, "kycInfo.panImage": customerKycDto.panImage });
+        customerToUpdate.set({ "verified.panVerified": false, "kycChecked.pan": null, "kycInfo.panImage": customerKycDto.panImage });
       }
       if (customerKycDto.otherFrontImage) {
-        customerToUpdate.set({ "verified.otherVerified": false, "kycInfo.otherFrontImage": customerKycDto.otherFrontImage });
+        customerToUpdate.set({ "verified.otherVerified": false, "kycChecked.other": null, "kycInfo.otherFrontImage": customerKycDto.otherFrontImage });
       }
       if (customerKycDto.otherBackImage) {
-        customerToUpdate.set({ "verified.otherVerified": false, "kycInfo.otherBackImage": customerKycDto.otherBackImage });
+        customerToUpdate.set({ "verified.otherVerified": false, "kycChecked.other": null, "kycInfo.otherBackImage": customerKycDto.otherBackImage });
       }
       if (customerKycDto.passbookImage) {
-        customerToUpdate.set({ "verified.bankVerified": false, "kycInfo.passbookImage": customerKycDto.passbookImage });
+        customerToUpdate.set({ "verified.bankVerified": false, "kycChecked.bank": null, "kycInfo.passbookImage": customerKycDto.passbookImage });
       }
       if (customerKycDto.upiImage) {
-        customerToUpdate.set({ "verified.upiVerified": false, "kycInfo.upiImage": customerKycDto.upiImage });
+        customerToUpdate.set({ "verified.upiVerified": false, "kycChecked.upi": null, "kycInfo.upiImage": customerKycDto.upiImage });
       }
       // Blank / missing numbers keep the stored value (clearing is done via Reject).
       for (const key of ['gstinNo', 'panNo', 'aadharNo', 'otherNo', 'otherName']) {
@@ -1573,6 +1574,7 @@ export class CustomersService {
           customerToUpdate.set({ [`kycInfo.${key}`]: value.trim() });
         }
       }
+      customerToUpdate.markModified('kycChecked');
       return await customerToUpdate.save();
     } catch (err) {
       throw new BadRequestException(err);
@@ -1617,23 +1619,23 @@ export class CustomersService {
       existingCustomer.shopimage = customerDetailsDto.shopimage ?? existingCustomer.shopimage;
       if (customerDetailsDto.aadharFrontImage) {
 
-        existingCustomer.set({ "verified.aadharVerified": false, "kycInfo.aadharFrontImage": customerDetailsDto.aadharFrontImage });
+        existingCustomer.set({ "verified.aadharVerified": false, "kycChecked.aadhar": null, "kycInfo.aadharFrontImage": customerDetailsDto.aadharFrontImage });
       }
       if (customerDetailsDto.aadharBackImage) {
 
-        existingCustomer.set({ "verified.aadharVerified": false, "kycInfo.aadharBackImage": customerDetailsDto.aadharBackImage });
+        existingCustomer.set({ "verified.aadharVerified": false, "kycChecked.aadhar": null, "kycInfo.aadharBackImage": customerDetailsDto.aadharBackImage });
       }
       if (customerDetailsDto.gstinImage) {
-        existingCustomer.set({ "verified.gstinVerified": false, "kycInfo.gstinImage": customerDetailsDto.gstinImage });
+        existingCustomer.set({ "verified.gstinVerified": false, "kycChecked.gstin": null, "kycInfo.gstinImage": customerDetailsDto.gstinImage });
       }
       if (customerDetailsDto.panImage) {
-        existingCustomer.set({ "verified.panVerified": false, "kycInfo.panImage": customerDetailsDto.panImage });
+        existingCustomer.set({ "verified.panVerified": false, "kycChecked.pan": null, "kycInfo.panImage": customerDetailsDto.panImage });
       }
       if (customerDetailsDto.otherBackImage || customerDetailsDto.otherFrontImage) {
-        existingCustomer.set({ "verified.otherVerified": false, "kycInfo.otherFrontImage": customerDetailsDto.otherFrontImage, "kycInfo.otherBackImage": customerDetailsDto.otherBackImage });
+        existingCustomer.set({ "verified.otherVerified": false, "kycChecked.other": null, "kycInfo.otherFrontImage": customerDetailsDto.otherFrontImage, "kycInfo.otherBackImage": customerDetailsDto.otherBackImage });
       }
       if (customerDetailsDto.passbookImage) {
-        existingCustomer.set({ "verified.bankVerified": false, "kycInfo.passbookImage": customerDetailsDto.passbookImage });
+        existingCustomer.set({ "verified.bankVerified": false, "kycChecked.bank": null, "kycInfo.passbookImage": customerDetailsDto.passbookImage });
       }
       if (customerDetailsDto.gstinNo) {
         existingCustomer.set({ "kycInfo.gstinNo": customerDetailsDto.gstinNo });
@@ -1651,7 +1653,7 @@ export class CustomersService {
         existingCustomer.set({ "kycInfo.otherName": customerDetailsDto.otherName });
       }
       if (customerDetailsDto.upiImage) {
-        existingCustomer.set({ "verified.upiVerified": false, "kycInfo.upiImage": customerDetailsDto.upiImage });
+        existingCustomer.set({ "verified.upiVerified": false, "kycChecked.upi": null, "kycInfo.upiImage": customerDetailsDto.upiImage });
       }
       if (customerDetailsDto.upiNumber) {
         // add upi number in setting Customer
@@ -1661,6 +1663,7 @@ export class CustomersService {
           await settingCustomer.save();
         }
       }
+      existingCustomer.markModified('kycChecked');
       const updatedRecord = await existingCustomer.save();
 
       if (existingCustomer) {
@@ -1920,7 +1923,7 @@ export class CustomersService {
       throw new BadRequestException('sfaCustomerId, groCustomerId or mobile is required');
     }
 
-    const candidates: any[] = await this.customerModel.find({ $or: or }).select('_id sfaCustomerId mobile kycInfo verified').lean().exec();
+    const candidates: any[] = await this.customerModel.find({ $or: or }).select('_id sfaCustomerId mobile kycInfo verified kycChecked').lean().exec();
     const customer = candidates.find((c: any) => c._id.toString() === String(body?.groCustomerId))
       || candidates.find((c: any) => Number(body?.sfaCustomerId) && c.sfaCustomerId === Number(body.sfaCustomerId))
       || candidates[0];
@@ -1934,24 +1937,33 @@ export class CustomersService {
     const bank = setting?.bankInfo || {};
     const upi = setting?.upiInfo || {};
     const str = (v: any) => (v === undefined || v === null ? '' : String(v));
+    // Verified (approved) documents count as checked too
+    const checkedOf = (doc: string, isVerified: boolean) => {
+      const c = (customer.kycChecked || {})[doc];
+      return {
+        checked: isVerified || !!c?.checked,
+        checkedBy: c?.checked ? str(c.byName) : '',
+        checkedAt: c?.checked && c.at ? new Date(c.at).toISOString() : '',
+      };
+    };
 
     return {
       found: true,
       groCustomerId: customer._id.toString(),
-      gstin: { number: str(kyc.gstinNo), image: str(kyc.gstinImage), verified: !!verified.gstinVerified },
-      pan: { number: str(kyc.panNo), image: str(kyc.panImage), verified: !!verified.panVerified },
+      gstin: { number: str(kyc.gstinNo), image: str(kyc.gstinImage), verified: !!verified.gstinVerified, ...checkedOf('gstin', !!verified.gstinVerified) },
+      pan: { number: str(kyc.panNo), image: str(kyc.panImage), verified: !!verified.panVerified, ...checkedOf('pan', !!verified.panVerified) },
       aadhar: {
         number: str(kyc.aadharNo),
         frontImage: str(kyc.aadharFrontImage),
         backImage: str(kyc.aadharBackImage),
-        verified: !!verified.aadharVerified,
+        verified: !!verified.aadharVerified, ...checkedOf('aadhar', !!verified.aadharVerified),
       },
       other: {
         name: str(kyc.otherName),
         number: str(kyc.otherNo),
         frontImage: str(kyc.otherFrontImage),
         backImage: str(kyc.otherBackImage),
-        verified: !!verified.otherVerified,
+        verified: !!verified.otherVerified, ...checkedOf('other', !!verified.otherVerified),
       },
       bank: {
         accountNo: str(bank.accountNo),
@@ -1960,13 +1972,13 @@ export class CustomersService {
         branch: str(bank.branch),
         ifsc: str(bank.ifsc),
         image: str(kyc.passbookImage || bank.image),
-        verified: !!verified.bankVerified,
+        verified: !!verified.bankVerified, ...checkedOf('bank', !!verified.bankVerified),
       },
       upi: {
         upiNumber: str(upi.upiNumber),
         holderName: str(upi.upiHolderName),
         image: str(kyc.upiImage || upi.image),
-        verified: !!verified.upiVerified,
+        verified: !!verified.upiVerified, ...checkedOf('upi', !!verified.upiVerified),
       },
     };
   };
@@ -2768,6 +2780,28 @@ export class CustomersService {
     }
   };
 
+  // CRM "Checked" checkbox: the sales team has checked this KYC document (before / without approving it)
+  public async kycChecked(kycCheckedDTO: KycCheckedDTO, authInfo: any): Promise<any> {
+    const checked = kycCheckedDTO.checked === true;
+    const value = checked
+      ? {
+        checked: true,
+        by: authInfo?._id && ObjectId.isValid(authInfo._id) ? ObjectId(authInfo._id) : undefined,
+        byName: [authInfo?.firstName, authInfo?.lastName].filter(Boolean).join(" "),
+        at: new Date(),
+      }
+      : null;
+    const customer = await this.customerModel.findOneAndUpdate(
+      { _id: ObjectId(kycCheckedDTO.customerid) },
+      { $set: { [`kycChecked.${kycCheckedDTO.kycdocs}`]: value } },
+      { new: true, useFindAndModify: false }
+    ).select('_id kycChecked').lean().exec();
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+    return customer;
+  };
+
   public async kycRejected(kycRejectDTO: KycRejectDTO): Promise<any> {
     try {
       var updateDocs = {}
@@ -2822,6 +2856,8 @@ export class CustomersService {
         }
       }
 
+      // A rejected document has to be checked again by the sales team
+      updateDocs[`kycChecked.${kycRejectDTO.kycdocs}`] = null;
       return await this.customerModel.findOneAndUpdate({ _id: ObjectId(kycRejectDTO.customerid) },
         {
           $set: updateDocs

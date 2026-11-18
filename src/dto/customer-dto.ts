@@ -386,6 +386,26 @@ export class KycVerifiedDTO {
     verified?: boolean;
 };
 
+export class KycCheckedDTO {
+    @ApiProperty()
+    @IsString()
+    @IsMongoId()
+    @IsNotEmpty()
+    @Transform(({ value }) => value.toString())
+    customerid: ObjectId;
+
+    @ApiProperty()
+    @IsString()
+    @IsNotEmpty()
+    @IsEnum(KycDocuments)
+    @Transform(({ value }) => value?.trim())
+    kycdocs: string;
+
+    @ApiProperty()
+    @IsBoolean()
+    checked: boolean;
+};
+
 export class KycRejectDTO {
     @ApiProperty()
     @IsString()
