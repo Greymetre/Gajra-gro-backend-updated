@@ -17,6 +17,13 @@ export class SfaSyncController {
     return await this.customersService.customerStatusFromSfa(body);
   }
 
+  // { sfaCustomerId, groCustomerId, mobile }: the customer's KYC documents, bank and UPI details (read only)
+  @Post('customers/kyc')
+  @HttpCode(200)
+  protected async customerKyc(@Body() body: any) {
+    return await this.customersService.customerKycForSfa(body);
+  }
+
   // { month: "YYYY-MM" }: every mechanic's points, redeemed points and unique coupon scans of that month
   // or { from: "YYYY-MM-DD", to: "YYYY-MM-DD" }: the same for those days
   @Post('mechanics/monthly-summary')

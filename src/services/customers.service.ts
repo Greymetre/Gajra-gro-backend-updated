@@ -1902,6 +1902,75 @@ export class CustomersService {
     return { updated: 1, customerid: customer._id.toString() };
   };
 
+  // SFA posts { sfaCustomerId, groCustomerId, mobile }: that customer's KYC documents (read only) for the SFA
+  // customer page. Images are relative upload paths; SFA prefixes its Gajra Gro image URL.
+  public async customerKycForSfa(body: any): Promise<any> {
+    const or: any[] = [];
+    if (body?.groCustomerId && ObjectId.isValid(body.groCustomerId)) {
+      or.push({ _id: ObjectId(body.groCustomerId) });
+    }
+    if (Number(body?.sfaCustomerId)) {
+      or.push({ sfaCustomerId: Number(body.sfaCustomerId) });
+    }
+    const mobile = normalizeMobile(body?.mobile);
+    if (mobile.length === 10) {
+      or.push({ mobile });
+    }
+    if (!or.length) {
+      throw new BadRequestException('sfaCustomerId, groCustomerId or mobile is required');
+    }
+
+    const candidates: any[] = await this.customerModel.find({ $or: or }).select('_id sfaCustomerId mobile kycInfo verified').lean().exec();
+    const customer = candidates.find((c: any) => c._id.toString() === String(body?.groCustomerId))
+      || candidates.find((c: any) => Number(body?.sfaCustomerId) && c.sfaCustomerId === Number(body.sfaCustomerId))
+      || candidates[0];
+    if (!customer) {
+      return { found: false, message: 'Customer not found in Gajra Gro' };
+    }
+
+    const setting: any = await this.settingCustomerModel.findOne({ customerid: customer._id }).select('bankInfo upiInfo').lean().exec();
+    const kyc = customer.kycInfo || {};
+    const verified = customer.verified || {};
+    const bank = setting?.bankInfo || {};
+    const upi = setting?.upiInfo || {};
+    const str = (v: any) => (v === undefined || v === null ? '' : String(v));
+
+    return {
+      found: true,
+      groCustomerId: customer._id.toString(),
+      gstin: { number: str(kyc.gstinNo), image: str(kyc.gstinImage), verified: !!verified.gstinVerified },
+      pan: { number: str(kyc.panNo), image: str(kyc.panImage), verified: !!verified.panVerified },
+      aadhar: {
+        number: str(kyc.aadharNo),
+        frontImage: str(kyc.aadharFrontImage),
+        backImage: str(kyc.aadharBackImage),
+        verified: !!verified.aadharVerified,
+      },
+      other: {
+        name: str(kyc.otherName),
+        number: str(kyc.otherNo),
+        frontImage: str(kyc.otherFrontImage),
+        backImage: str(kyc.otherBackImage),
+        verified: !!verified.otherVerified,
+      },
+      bank: {
+        accountNo: str(bank.accountNo),
+        holderName: str(bank.holderName),
+        bankName: str(bank.bankName),
+        branch: str(bank.branch),
+        ifsc: str(bank.ifsc),
+        image: str(kyc.passbookImage || bank.image),
+        verified: !!verified.bankVerified,
+      },
+      upi: {
+        upiNumber: str(upi.upiNumber),
+        holderName: str(upi.upiHolderName),
+        image: str(kyc.upiImage || upi.image),
+        verified: !!verified.upiVerified,
+      },
+    };
+  };
+
   /**
    * { month: "YYYY-MM" }: points, redeemed points and coupon scans of every mechanic in that month (India time),
    * for the SFA Mechanic Category report and dashboard. Points = every credit (coupon scans, scheme points,
