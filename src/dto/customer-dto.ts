@@ -404,6 +404,19 @@ export class KycCheckedDTO {
     @ApiProperty()
     @IsBoolean()
     checked: boolean;
+
+    // Document number typed in the admin viewer; saved when checking.
+    @ApiProperty({ required: false })
+    @IsOptional()
+    @IsString()
+    @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+    docNo?: string;
+
+    // Other details typed in the admin viewer (same keys as KycVerifiedDTO.details).
+    @ApiProperty({ required: false })
+    @IsOptional()
+    @IsObject()
+    details?: Record<string, string>;
 };
 
 export class KycRejectDTO {

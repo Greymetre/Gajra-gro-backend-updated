@@ -2790,9 +2790,9 @@ export class CustomersService {
     }));
   };
 
-  public async kycVerified(kycVerifiedDTO: KycVerifiedDTO): Promise<any> {
-    const isVerified = kycVerifiedDTO.verified !== false;
-    const docNo = kycVerifiedDTO.docNo;
+  // Builds the $set updates for a KYC document's number and the extra details typed in
+  // the admin viewer (used by both verify and "checked"). Blank values keep stored data.
+  private buildKycDetailSets(verifiedTo: string, docNo?: string, details?: Record<string, string>) {
     const hasDocNo = typeof docNo === 'string' && docNo !== '';
 
     // Where each document's number lives: on the customer (kycInfo) or on the
@@ -2802,22 +2802,22 @@ export class CustomersService {
       'verified.panVerified': 'kycInfo.panNo',
       'verified.aadharVerified': 'kycInfo.aadharNo',
       'verified.otherVerified': 'kycInfo.otherNo',
-    }[kycVerifiedDTO.verifiedTo];
+    }[verifiedTo];
     const settingNoPath = {
       'verified.bankVerified': 'bankInfo.accountNo',
       'verified.upiVerified': 'upiInfo.upiNumber',
-    }[kycVerifiedDTO.verifiedTo];
+    }[verifiedTo];
 
     if (hasDocNo) {
-      if (kycVerifiedDTO.verifiedTo == 'verified.panVerified' && !/^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(docNo))
+      if (verifiedTo == 'verified.panVerified' && !/^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(docNo))
         throw new BadRequestException("Invalid PAN number");
-      if (kycVerifiedDTO.verifiedTo == 'verified.aadharVerified' && !/^[0-9]{12}$/.test(docNo))
+      if (verifiedTo == 'verified.aadharVerified' && !/^[0-9]{12}$/.test(docNo))
         throw new BadRequestException("Invalid Aadhaar number");
-      if (kycVerifiedDTO.verifiedTo == 'verified.bankVerified' && !/^\d{9,18}$/.test(docNo))
+      if (verifiedTo == 'verified.bankVerified' && !/^\d{9,18}$/.test(docNo))
         throw new BadRequestException("Invalid bank account number");
     }
 
-    const customerSet: any = { [kycVerifiedDTO.verifiedTo]: isVerified };
+    const customerSet: any = {};
     if (hasDocNo && customerNoPath) {
       const upper = ['kycInfo.gstinNo', 'kycInfo.panNo'].includes(customerNoPath);
       customerSet[customerNoPath] = upper ? docNo.toUpperCase() : docNo;
@@ -2840,21 +2840,32 @@ export class CustomersService {
       'verified.otherVerified': ['contactPerson'],
       'verified.bankVerified': ['holderName', 'bankName', 'ifsc', 'contactPerson'],
       'verified.upiVerified': ['contactPerson'],
-    }[kycVerifiedDTO.verifiedTo] || [];
-    const details = isVerified && kycVerifiedDTO.details ? kycVerifiedDTO.details : {};
+    }[verifiedTo] || [];
+    const input = details || {};
     for (const key of allowedDetails) {
-      const value = details[key];
+      const value = input[key];
       if (typeof value !== 'string') continue;
       const trimmed = value.trim();
-      // A blank field keeps the stored value; verifying never erases data.
       if (!trimmed) continue;
       const path = detailPaths[key];
       const finalValue = key === 'ifsc' ? trimmed.toUpperCase() : trimmed;
-      if (key === 'ifsc' && finalValue && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(finalValue))
+      if (key === 'ifsc' && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(finalValue))
         throw new BadRequestException("Invalid IFSC code");
       if (path.customer) customerSet[path.customer] = finalValue;
       if (path.setting) settingSet[path.setting] = finalValue;
     }
+    return { customerSet, settingSet };
+  }
+
+  public async kycVerified(kycVerifiedDTO: KycVerifiedDTO): Promise<any> {
+    const isVerified = kycVerifiedDTO.verified !== false;
+    const sets = this.buildKycDetailSets(
+      kycVerifiedDTO.verifiedTo,
+      kycVerifiedDTO.docNo,
+      isVerified ? kycVerifiedDTO.details : undefined
+    );
+    const customerSet: any = { ...sets.customerSet, [kycVerifiedDTO.verifiedTo]: isVerified };
+    const settingSet: any = sets.settingSet;
     if (kycVerifiedDTO.verifiedTo == 'verified.upiVerified') settingSet['upiInfo.verified'] = isVerified;
 
     try {
@@ -2928,6 +2939,17 @@ export class CustomersService {
     if (existing?.kycChecked?.[kycCheckedDTO.kycdocs]?.approved) {
       throw new BadRequestException('This document is already approved by the sales person; verify or reject it');
     }
+    // Save whatever the admin typed in the viewer (number / bank details) with the check.
+    const verifiedTo = `verified.${kycCheckedDTO.kycdocs}Verified`;
+    const detailSets = checked
+      ? this.buildKycDetailSets(verifiedTo, kycCheckedDTO.docNo, kycCheckedDTO.details)
+      : { customerSet: {}, settingSet: {} };
+    if (Object.keys(detailSets.settingSet).length) {
+      await this.settingCustomerModel.findOneAndUpdate({ customerid: ObjectId(kycCheckedDTO.customerid) },
+        { $set: detailSets.settingSet },
+        { new: true, useFindAndModify: false, upsert: true }
+      );
+    }
     const value = checked
       ? {
         checked: true,
@@ -2938,7 +2960,7 @@ export class CustomersService {
       : null;
     const customer = await this.customerModel.findOneAndUpdate(
       { _id: ObjectId(kycCheckedDTO.customerid) },
-      { $set: { [`kycChecked.${kycCheckedDTO.kycdocs}`]: value } },
+      { $set: { ...detailSets.customerSet, [`kycChecked.${kycCheckedDTO.kycdocs}`]: value } },
       { new: true, useFindAndModify: false }
     ).select('_id kycChecked').lean().exec();
     if (!customer) {
