@@ -15,6 +15,8 @@ export const NEWS_MESSAGE_MAX = 1000;
 export const NEWS_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const NEWS_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
+export const NEWS_CUSTOMER_TYPES = ['Mechanic', 'Retailer'];
+
 const CUSTOMER_OPTIONS_LIMIT = 50;
 const PUSH_CONCURRENCY = 100;
 
@@ -22,6 +24,7 @@ export interface NewsFilterInput {
   stateId?: string;
   districtId?: string;
   cityId?: string;
+  customerType?: string;
   customerIds?: string[] | string;
   search?: string;
 }
@@ -71,6 +74,12 @@ export class NotificationsService {
     const districtId = toObjectId(input.districtId, 'district');
     const cityId = toObjectId(input.cityId, 'city');
     const customerIds = parseIdList(input.customerIds);
+    // Empty = every customer type
+    const customerTypeInput = String(input.customerType || '').trim();
+    const customerType = customerTypeInput
+      ? NEWS_CUSTOMER_TYPES.find(t => t.toLowerCase() === customerTypeInput.toLowerCase())
+      : undefined;
+    if (customerTypeInput && !customerType) throw new BadRequestException('Invalid customer type');
 
     const [state, district, city] = await Promise.all([
       stateId ? this.stateModel.findById(stateId, { stateName: 1 }).lean() : null,
@@ -82,6 +91,7 @@ export class NotificationsService {
     if (cityId && !city) throw new BadRequestException('Selected city was not found');
 
     const match: any = { active: true };
+    if (customerType) match.customerType = exactName(customerType);
     if (state) match['address.state'] = exactName(state.stateName);
     if (city) {
       match['address.city'] = exactName(city.cityName);
@@ -96,7 +106,7 @@ export class NotificationsService {
     return {
       match,
       customerIds,
-      names: { state: state?.stateName, district: district?.districtName, city: city?.cityName },
+      names: { state: state?.stateName, district: district?.districtName, city: city?.cityName, customerType },
     };
   }
 
@@ -140,6 +150,7 @@ export class NotificationsService {
         label: [c.firmName, c.contactPerson && c.contactPerson !== c.firmName ? c.contactPerson : '', c.mobile]
           .filter(Boolean).join(' - ') + (c.customerType ? ` (${c.customerType})` : ''),
       })),
+      customerTypes: NEWS_CUSTOMER_TYPES.map(t => ({ value: t, label: t })),
       totalCustomers,
     };
   }

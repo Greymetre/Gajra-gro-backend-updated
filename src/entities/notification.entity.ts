@@ -31,6 +31,7 @@ export class Notification {
         state?: string;
         district?: string;
         city?: string;
+        customerType?: string;
         customerIds?: string[];
     };
 

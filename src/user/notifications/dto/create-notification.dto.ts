@@ -8,6 +8,8 @@ export class NewsFilterDto {
   @ApiPropertyOptional() @IsOptional() @IsString() stateId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() districtId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() cityId?: string;
+  @ApiPropertyOptional({ description: 'Mechanic or Retailer; empty = all customer types' })
+  @IsOptional() @IsString() customerType?: string;
   @ApiPropertyOptional({ description: 'Search customers by firm name, contact person or mobile' })
   @IsOptional() @IsString() @MaxLength(100) search?: string;
 }
@@ -17,6 +19,8 @@ export class SendNewsDto {
   @ApiPropertyOptional() @IsOptional() @IsString() stateId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() districtId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() cityId?: string;
+  @ApiPropertyOptional({ description: 'Mechanic or Retailer; empty = all customer types' })
+  @IsOptional() @IsString() customerType?: string;
   @ApiPropertyOptional({ description: 'JSON array (or comma separated) of customer ids; empty = all matching customers' })
   @IsOptional() customerIds?: string | string[];
   // Length limits are checked in NotificationsService so the CRM gets a readable message.
