@@ -10,6 +10,8 @@ import { Transaction, TransactionSchema } from '../../entities/transaction.entit
 import { User, UserSchema } from '../../entities/users.entity';
 import { OtpLog, OtpLogSchema } from '../../entities/otplog.entity';
 import { Remark, RemarkSchema } from '../../entities/remark.entity';
+import { Redemption, RedemptionSchema } from '../../entities/redemption.entity';
+import { SfaPointsService } from '../../services/sfa-points.service';
 import { MongooseModule } from '@nestjs/mongoose'
 @Module({
   imports: [ MongooseModule.forFeature([
@@ -20,10 +22,11 @@ import { MongooseModule } from '@nestjs/mongoose'
     { name: User.name, schema: UserSchema },
     { name: OtpLog.name, schema: OtpLogSchema },
     { name: Remark.name, schema: RemarkSchema },
+    { name: Redemption.name, schema: RedemptionSchema },
 
   ])],
   controllers: [CustomersController, SfaSyncController],
-  providers: [CustomersService]
+  providers: [CustomersService, SfaPointsService]
 })
 export class CustomersModule {
   configure(consumer: MiddlewareConsumer) {

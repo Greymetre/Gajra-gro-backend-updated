@@ -2,13 +2,14 @@ import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { CustomersService } from '../../services/customers.service';
 import { SfaSyncKeyGuard } from 'src/common/guards/sfa-sync-key.guard';
+import { SfaPointsService } from '../../services/sfa-points.service';
 
 // Called by the SFA backend (not by app / CRM users), so it has no login middleware
 @ApiExcludeController()
 @Controller('sfa-sync')
 @UseGuards(SfaSyncKeyGuard)
 export class SfaSyncController {
-  constructor(private readonly customersService: CustomersService) { }
+  constructor(private readonly customersService: CustomersService, private readonly sfaPointsService: SfaPointsService) { }
 
   // { sfaCustomerId, groCustomerId, mobile, active }: a customer switched active / inactive in SFA
   @Post('customers/status')
@@ -36,6 +37,13 @@ export class SfaSyncController {
   @HttpCode(200)
   protected async kycAction(@Body() body: any) {
     return await this.customersService.kycActionFromSfa(body);
+  }
+
+  // { type: mechanic | retailer, months }: points earned / redeemed / outstanding, all time and month by month
+  @Post('points/outstanding')
+  @HttpCode(200)
+  protected async pointsOutstanding(@Body() body: any) {
+    return await this.sfaPointsService.outstanding(body);
   }
 
   // { month: "YYYY-MM" }: every mechanic's points, redeemed points and unique coupon scans of that month
